@@ -115,6 +115,37 @@ class TestScanning:
         make_bottle(bottles, "A1B2C3D4-0000", display_name="My Games")
         assert scan_prefixes(mac_system)[0].name == "My Games"
 
+    def test_bottles_hidden_inside_app_wrappers_are_found(
+        self, mac_home: Path, mac_system: FakeSystem
+    ) -> None:
+        """Wineskin and Porting Kit bury the whole prefix inside a .app."""
+        applications = mac_home / "Applications"
+        bundle = applications / "Some Game.app" / "Contents" / "SharedSupport"
+        bundle.mkdir(parents=True)
+        make_bottle(bundle, "prefix", users=("Wineskin",))
+
+        found = scan_prefixes(mac_system)
+        assert [prefix.kind for prefix in found] == [BottleKind.WINESKIN]
+
+    def test_an_app_wrapper_is_named_after_its_bundle(
+        self, mac_home: Path, mac_system: FakeSystem
+    ) -> None:
+        """Every Wineskin bottle is called "prefix"; that tells nobody anything."""
+        bundle = mac_home / "Applications" / "Elden Ring.app" / "Contents" / "SharedSupport"
+        bundle.mkdir(parents=True)
+        make_bottle(bundle, "prefix")
+        assert scan_prefixes(mac_system)[0].name == "Elden Ring"
+
+    def test_an_app_without_a_bottle_is_ignored(
+        self, mac_home: Path, mac_system: FakeSystem
+    ) -> None:
+        (mac_home / "Applications" / "Calculator.app" / "Contents").mkdir(parents=True)
+        assert scan_prefixes(mac_system) == []
+
+    def test_app_wrappers_are_not_looked_for_on_windows(self, tmp_path: Path) -> None:
+        system = FakeSystem(platform=Platform.WINDOWS, home_dir=tmp_path)
+        assert scan_prefixes(system) == []
+
     def test_a_folder_merely_named_after_a_tool_is_not_that_tool(
         self, tmp_path: Path, mac_system: FakeSystem
     ) -> None:

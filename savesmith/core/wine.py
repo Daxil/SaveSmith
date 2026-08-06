@@ -45,7 +45,14 @@ _DEFAULT_VISIT_BUDGET = 4000
 class BottleKind(StrEnum):
     WHISKY = "whisky"
     CROSSOVER = "crossover"
+    WINESKIN = "wineskin"
+    """A bottle wrapped inside a double-clickable .app — Wineskin, Porting Kit
+    and the app wrappers CrossOver exports."""
     WINE = "wine"
+
+
+# Wineskin-style wrappers hide the bottle here inside the application bundle.
+_WRAPPER_SUFFIX = ("Contents", "SharedSupport", "prefix")
 
 
 @dataclass(frozen=True)
@@ -106,6 +113,37 @@ def default_roots(system: SystemFacade) -> list[Path]:
     ]
 
 
+def application_folders(system: SystemFacade) -> list[Path]:
+    """Where .app wrappers with a bottle inside tend to live."""
+    if system.platform is not Platform.MACOS:
+        return []
+    return [system.home() / "Applications", Path("/Applications")]
+
+
+def find_app_wrappers(folders: Iterable[Path]) -> Iterator[Path]:
+    """Bottles hidden inside application bundles.
+
+    Wineskin and Porting Kit produce a normal-looking ``Elden Ring.app`` with
+    the whole prefix buried in ``Contents/SharedSupport/prefix``. Walking
+    /Applications blindly would be slow and rude, so the known shape is checked
+    directly instead.
+    """
+    for folder in folders:
+        try:
+            with os.scandir(folder) as entries:
+                bundles = sorted(
+                    entry.path
+                    for entry in entries
+                    if entry.name.endswith(".app") and entry.is_dir(follow_symlinks=False)
+                )
+        except OSError:
+            continue
+        for bundle in bundles:
+            candidate = Path(bundle).joinpath(*_WRAPPER_SUFFIX)
+            if is_prefix(candidate):
+                yield candidate
+
+
 def is_prefix(path: Path) -> bool:
     """A bottle is ``drive_c`` plus at least one registry hive.
 
@@ -132,11 +170,18 @@ def scan_prefixes(
     """
     budget = _Budget(visit_budget)
     found: dict[Path, WinePrefix] = {}
+
+    def remember(path: Path) -> None:
+        resolved = path.resolve()
+        if resolved not in found:
+            found[resolved] = _describe(path)
+
     for root in (*default_roots(system), *extra_roots):
         for prefix_path in _find_under(root, max_depth, budget):
-            resolved = prefix_path.resolve()
-            if resolved not in found:
-                found[resolved] = _describe(prefix_path)
+            remember(prefix_path)
+    for prefix_path in find_app_wrappers(application_folders(system)):
+        remember(prefix_path)
+
     return sorted(found.values(), key=lambda prefix: (prefix.name.lower(), str(prefix.path)))
 
 
@@ -190,11 +235,21 @@ def _kind_of(path: Path) -> BottleKind:
     pytest temp directory named after this very test — is not a Whisky bottle.
     """
     components = {part.lower() for part in path.parts}
+    if _bundle_of(path) is not None:
+        return BottleKind.WINESKIN
     if components & _WHISKY_MARKERS:
         return BottleKind.WHISKY
     if components & _CROSSOVER_MARKERS:
         return BottleKind.CROSSOVER
     return BottleKind.WINE
+
+
+def _bundle_of(path: Path) -> Path | None:
+    """The .app this bottle is buried in, if any."""
+    if path.parts[-len(_WRAPPER_SUFFIX) :] != _WRAPPER_SUFFIX:
+        return None
+    bundle = path.parents[len(_WRAPPER_SUFFIX) - 1]
+    return bundle if bundle.name.endswith(".app") else None
 
 
 def _name_of(path: Path) -> str:
@@ -203,6 +258,12 @@ def _name_of(path: Path) -> str:
     Whisky names bottles with a UUID and keeps the real name in a plist; using
     the folder name there would show the player a row of hex digits.
     """
+    bundle = _bundle_of(path)
+    if bundle is not None:
+        # Every Wineskin bottle is literally called "prefix"; the game's name
+        # is on the bundle around it.
+        return bundle.name.removesuffix(".app")
+
     metadata = path / "Metadata.plist"
     if metadata.is_file():
         try:
