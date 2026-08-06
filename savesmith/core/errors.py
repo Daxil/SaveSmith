@@ -155,6 +155,38 @@ class PluginValidationError(SaveSmithError):
         self.where = where
 
 
+class BackupError(SaveSmithError):
+    """A backup could not be made, so the edit did not happen.
+
+    Deliberately fatal to the write: an edit without a backup is the one thing
+    SaveSmith must never do.
+    """
+
+    code: ClassVar[str] = "backup_failed"
+
+    def __init__(self, source: str, reason: str, *, detail: str | None = None) -> None:
+        super().__init__(
+            f"A backup of the save file could not be made, so nothing was changed. {reason}",
+            detail=detail or f"{source}: {reason}",
+            source=source,
+        )
+
+
+class SaveInUseError(SaveSmithError):
+    """The game is running, or something else holds the file open."""
+
+    code: ClassVar[str] = "save_file_in_use"
+
+    def __init__(self, path: str, *, detail: str | None = None) -> None:
+        super().__init__(
+            "The save file is in use. Close the game completely and try again — "
+            "editing a save while the game is running loses the change as soon "
+            "as the game saves over it.",
+            detail=detail or path,
+            path=path,
+        )
+
+
 class FieldPathError(SaveSmithError):
     """A field the plugin describes is not present in this particular save.
 
