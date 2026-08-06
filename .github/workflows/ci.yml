@@ -48,3 +48,9 @@ jobs:
       # host, so one command covers every runner.
       - name: Tests
         run: uv run pytest -q
+
+      # Prints what the resolver sees on a real runner. The value is the log:
+      # it shows the actual known-folder paths Windows hands back, which no
+      # amount of mocking can confirm.
+      - name: Diagnostics smoke
+        run: uv run python -m savesmith.core.diagnostics
