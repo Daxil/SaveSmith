@@ -6,6 +6,11 @@ tested from a Mac, and it is enforced by
 ``tests/test_no_platform_branching.py``.
 """
 
+from savesmith.core.paths._resolver import (
+    PathResolver,
+    PathToken,
+    extended_length_path,
+)
 from savesmith.core.paths._system import (
     FakeSystem,
     KnownFolder,
@@ -17,7 +22,10 @@ from savesmith.core.paths._system import (
 __all__ = [
     "FakeSystem",
     "KnownFolder",
+    "PathResolver",
+    "PathToken",
     "RealSystem",
     "RegistryHive",
     "SystemFacade",
+    "extended_length_path",
 ]
