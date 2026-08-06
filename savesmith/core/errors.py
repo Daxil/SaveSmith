@@ -135,6 +135,66 @@ class VdfParseError(SaveSmithError):
         self.line = line
 
 
+class PluginValidationError(SaveSmithError):
+    """A plugin is malformed and was not loaded.
+
+    Aimed at whoever wrote the plugin, but a user may see it after installing
+    one, so it still has to say which plugin and what is wrong with it.
+    """
+
+    code: ClassVar[str] = "plugin_invalid"
+
+    def __init__(self, plugin: str, where: str, reason: str) -> None:
+        super().__init__(
+            f"The plugin '{plugin}' is not valid and was not loaded: {where} {reason}",
+            detail=f"{plugin}: {where} {reason}",
+            plugin=plugin,
+            where=where,
+        )
+        self.plugin = plugin
+        self.where = where
+
+
+class UnknownOperationError(SaveSmithError):
+    """A plugin asks for a pipeline step this build does not implement."""
+
+    code: ClassVar[str] = "unknown_operation"
+
+    def __init__(self, operation: str, known: tuple[str, ...] = ()) -> None:
+        hint = f" This build knows: {', '.join(sorted(known))}." if known else ""
+        super().__init__(
+            f"This game's plugin needs a decoding step called '{operation}' that this "
+            f"version of SaveSmith does not have.{hint} Updating SaveSmith should fix it.",
+            detail=f"unknown op {operation!r}",
+            operation=operation,
+        )
+        self.operation = operation
+
+
+class PipelineError(SaveSmithError):
+    """A decoding or re-encoding step failed on this particular file."""
+
+    code: ClassVar[str] = "pipeline_step_failed"
+
+    def __init__(
+        self,
+        step_index: int,
+        operation: str,
+        reason: str,
+        *,
+        detail: str | None = None,
+    ) -> None:
+        super().__init__(
+            f"This save file could not be read: step {step_index + 1} "
+            f"({operation}) failed because {reason}",
+            detail=detail or f"step {step_index} ({operation}): {reason}",
+            step_index=step_index,
+            operation=operation,
+        )
+        self.step_index = step_index
+        self.operation = operation
+
+
 class SteamNotFoundError(SaveSmithError):
     """No Steam installation on this machine, or it is somewhere unusual."""
 

@@ -12,9 +12,12 @@ import pytest
 from savesmith.core.errors import (
     AmbiguousWineUserError,
     PathResolutionError,
+    PipelineError,
+    PluginValidationError,
     SaveSmithError,
     SteamDataError,
     SteamNotFoundError,
+    UnknownOperationError,
     UnknownPathTokenError,
     UnsupportedPlatformError,
     VdfParseError,
@@ -31,6 +34,9 @@ SAMPLES: list[SaveSmithError] = [
     SteamNotFoundError(searched=("C:\\Program Files (x86)\\Steam",)),
     SteamDataError("libraryfolders.vdf", "the file ends in the middle of a block"),
     VdfParseError("libraryfolders.vdf", "a block that is never closed", line=12),
+    PluginValidationError("hollow-knight", "pipeline step 1 (strip_prefix)", "is missing 'bytes'."),
+    UnknownOperationError("decrypt_with_magic", known=("gzip", "json_parse")),
+    PipelineError(0, "gzip", "the data does not start with a gzip header"),
     WinePrefixError("/bottles/hk", "it has no drive_c folder"),
     AmbiguousWineUserError("/bottles/hk", ("danil", "crossover")),
 ]
