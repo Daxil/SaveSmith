@@ -88,10 +88,19 @@ register(
 # base64
 # ---------------------------------------------------------------------------
 
-_ALPHABETS = {
-    "standard": (base64.b64decode, base64.b64encode),
-    "urlsafe": (base64.urlsafe_b64decode, base64.urlsafe_b64encode),
-}
+_ALPHABETS = ("standard", "urlsafe")
+
+
+def _b64_decode(body: str, variant: str) -> bytes:
+    if variant == "urlsafe":
+        # Translated rather than passed to urlsafe_b64decode, which offers no
+        # validation — and validation is the whole point here.
+        body = body.replace("-", "+").replace("_", "/")
+    # validate=True matters more than it looks: without it, Python quietly
+    # drops every character outside the alphabet, so any prose at all
+    # "decodes" successfully. The decoder ladder then reports base64 for
+    # ordinary text files.
+    return base64.b64decode(body, validate=True)
 
 
 def _base64_decode(payload: Any, params: Params, hints: Hints) -> bytes:
@@ -110,7 +119,7 @@ def _base64_decode(payload: Any, params: Params, hints: Hints) -> bytes:
     hints["line_width"] = _line_width(text)
     hints["trailing"] = text[len(text.rstrip()) :]
     try:
-        return _ALPHABETS[variant][0](body)
+        return _b64_decode(body, variant)
     except (binascii.Error, ValueError) as exc:
         raise ValueError(f"the base64 text is malformed ({exc})") from exc
 
@@ -118,7 +127,8 @@ def _base64_decode(payload: Any, params: Params, hints: Hints) -> bytes:
 def _base64_encode(payload: Any, params: Params, hints: Mapping[str, Any]) -> bytes:
     raw = _as_bytes(payload, "base64")
     variant = str(params.get("variant", "standard"))
-    text = _ALPHABETS[variant][1](raw).decode("ascii")
+    encoder = base64.urlsafe_b64encode if variant == "urlsafe" else base64.b64encode
+    text = encoder(raw).decode("ascii")
     width = int(hints.get("line_width", 0))
     if width > 0:
         text = "\n".join(text[start : start + width] for start in range(0, len(text), width))
