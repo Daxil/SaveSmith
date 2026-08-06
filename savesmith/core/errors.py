@@ -1,0 +1,176 @@
+"""Error hierarchy.
+
+Every error that can reach a user carries two separate texts:
+
+``user_message``
+    One or two sentences a non-technical person can act on. No jargon, no
+    tracebacks, no file offsets. This is what the GUI shows.
+``detail``
+    Everything an engineer needs: paths, offsets, the underlying exception.
+    Goes to the log, never to the main UI surface.
+
+``code`` is a stable machine-readable identifier. The UI layer will use it to
+look up a localized string later; until then ``user_message`` is the English
+fallback and the only text we ship.
+"""
+
+from __future__ import annotations
+
+from typing import Any, ClassVar
+
+_TERMINATORS = (".", "?", "!")
+
+
+def _as_sentence(text: str) -> str:
+    """Make sure a message reads as a finished sentence.
+
+    Reasons are handed in by callers as fragments ("it has no drive_c folder"),
+    and requiring every call site to remember the full stop guarantees that
+    some of them will not.
+    """
+    stripped = text.rstrip()
+    if stripped and not stripped.endswith(_TERMINATORS):
+        return stripped + "."
+    return stripped
+
+
+class SaveSmithError(Exception):
+    """Base class for everything SaveSmith raises on purpose.
+
+    Anything escaping the core that is *not* a subclass of this is a bug: it
+    means a raw OSError or ValueError reached the UI with a message written for
+    a developer.
+    """
+
+    code: ClassVar[str] = "error"
+
+    def __init__(
+        self,
+        user_message: str,
+        *,
+        detail: str | None = None,
+        **context: Any,
+    ) -> None:
+        user_message = _as_sentence(user_message)
+        super().__init__(user_message)
+        self.user_message = user_message
+        self.detail = detail
+        self.context: dict[str, Any] = context
+
+    def __str__(self) -> str:
+        if self.detail:
+            return f"{self.user_message} [{self.detail}]"
+        return self.user_message
+
+    def __repr__(self) -> str:
+        return f"{type(self).__name__}(code={self.code!r}, user_message={self.user_message!r})"
+
+
+class UnsupportedPlatformError(SaveSmithError):
+    """Raised when running somewhere we deliberately do not support."""
+
+    code: ClassVar[str] = "unsupported_platform"
+
+    def __init__(self, platform_name: str, *, detail: str | None = None) -> None:
+        super().__init__(
+            f"SaveSmith does not support {platform_name}. "
+            f"Supported systems are Windows 10 or later and macOS 13 or later.",
+            detail=detail,
+            platform=platform_name,
+        )
+
+
+class PathResolutionError(SaveSmithError):
+    """A path pattern could not be turned into a real location.
+
+    Not for "the folder does not exist" — that is an ordinary empty result.
+    This means the pattern itself is wrong, e.g. an unknown ``{TOKEN}``.
+    """
+
+    code: ClassVar[str] = "path_resolution_failed"
+
+    def __init__(self, pattern: str, reason: str, *, detail: str | None = None) -> None:
+        super().__init__(
+            f"Could not work out where this location points: {pattern}. {reason}",
+            detail=detail,
+            pattern=pattern,
+        )
+
+
+class UnknownPathTokenError(PathResolutionError):
+    """A plugin used a ``{TOKEN}`` the resolver has never heard of."""
+
+    code: ClassVar[str] = "unknown_path_token"
+
+    def __init__(self, token: str, pattern: str, known_tokens: tuple[str, ...] = ()) -> None:
+        hint = ""
+        if known_tokens:
+            hint = " Known tokens: " + ", ".join(sorted(known_tokens)) + "."
+        super().__init__(
+            pattern,
+            f"The plugin refers to {{{token}}}, which this version of SaveSmith "
+            f"does not know.{hint} The plugin probably needs a newer version of the app.",
+            detail=f"unknown token {token!r} in pattern {pattern!r}",
+        )
+        self.token = token
+
+
+class SteamNotFoundError(SaveSmithError):
+    """No Steam installation on this machine, or it is somewhere unusual."""
+
+    code: ClassVar[str] = "steam_not_found"
+
+    def __init__(self, *, searched: tuple[str, ...] = (), detail: str | None = None) -> None:
+        super().__init__(
+            "Could not find a Steam installation. If Steam is installed in an unusual "
+            "place, point SaveSmith at its folder manually; otherwise games outside "
+            "Steam can still be added by hand.",
+            detail=detail or ("searched: " + ", ".join(searched) if searched else None),
+            searched=searched,
+        )
+
+
+class SteamDataError(SaveSmithError):
+    """Steam is installed but one of its data files could not be read."""
+
+    code: ClassVar[str] = "steam_data_unreadable"
+
+    def __init__(self, path: str, reason: str, *, detail: str | None = None) -> None:
+        super().__init__(
+            f"Steam's own data file could not be read, so some games may be missing "
+            f"from the list. Reason: {reason}",
+            detail=detail or f"{path}: {reason}",
+            path=path,
+        )
+
+
+class WinePrefixError(SaveSmithError):
+    """A Wine/CrossOver/Whisky bottle could not be used."""
+
+    code: ClassVar[str] = "wine_prefix_unusable"
+
+    def __init__(self, path: str, reason: str, *, detail: str | None = None) -> None:
+        super().__init__(
+            f"This Windows bottle could not be read: {reason}",
+            detail=detail or f"{path}: {reason}",
+            path=path,
+        )
+
+
+class AmbiguousWineUserError(WinePrefixError):
+    """Several Windows users inside one bottle and no way to pick one safely.
+
+    We refuse to guess: picking the wrong user means silently editing the wrong
+    save, which is worse than asking.
+    """
+
+    code: ClassVar[str] = "wine_user_ambiguous"
+
+    def __init__(self, path: str, candidates: tuple[str, ...]) -> None:
+        super().__init__(
+            path,
+            f"it contains several Windows user profiles ({', '.join(candidates)}) "
+            f"and SaveSmith will not guess which one is yours. Pick one in the settings.",
+            detail=f"{path}: candidates={candidates!r}",
+        )
+        self.candidates = candidates
