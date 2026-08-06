@@ -17,8 +17,10 @@ from savesmith.core.ops._registry import (
 # Imported for the side effect of registering their operations.
 from savesmith.core.ops import (  # noqa: F401  isort:skip
     binary,
+    bnd4,
     compress,
     crypto,
+    fromsoft,
     gvas,
     packed,
     structured,
