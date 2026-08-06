@@ -18,6 +18,7 @@ from savesmith.core.ops._registry import (
 from savesmith.core.ops import (  # noqa: F401  isort:skip
     binary,
     bnd4,
+    checksum,
     compress,
     crypto,
     fromsoft,

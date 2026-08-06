@@ -26,6 +26,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
+from savesmith.core.checksum import spec_from_mapping as checksum_spec_from_mapping
 from savesmith.core.errors import FieldValueError, PluginValidationError
 from savesmith.core.fields import PathStep, normalise, render
 from savesmith.core.pipeline import Pipeline
@@ -276,15 +277,7 @@ class Plugin:
                 name, "'id'", "may only contain lowercase letters, digits and hyphens."
             )
 
-        # 'checksum' is milestone 7. Accepting one now would mean writing files
-        # with a stale checksum, which the game rejects — refuse instead.
-        if data.get("checksum") is not None:
-            raise PluginValidationError(
-                name,
-                "'checksum'",
-                "describes a checksum, which this version of SaveSmith cannot "
-                "recalculate yet. Updating SaveSmith should fix it.",
-            )
+        checksum_step = _parse_checksum(data.get("checksum"), name)
 
         fields = tuple(
             _parse_field(entry, name, index)
@@ -307,7 +300,8 @@ class Plugin:
             detect=_parse_detect(data.get("detect"), name),
             risk=_parse_risk(data.get("risk"), name),
             pipeline=Pipeline.from_manifest(
-                _list(data, "pipeline", name, required=False), plugin_id=plugin_id
+                [*checksum_step, *_list(data, "pipeline", name, required=False)],
+                plugin_id=plugin_id,
             ),
             fields=fields,
             steam_appid=_optional_int(data, "steam_appid", name),
@@ -454,6 +448,30 @@ def _flag(entry: Mapping[str, Any], key: str, plugin: str, where: str) -> bool:
     if not isinstance(value, bool):
         raise PluginValidationError(plugin, f"{where} '{key}'", "must be true or false.")
     return value
+
+
+def _parse_checksum(value: Any, plugin: str) -> list[dict[str, Any]]:
+    """Turn the manifest's ``checksum`` block into a leading pipeline step.
+
+    It goes first so that, running the pipeline backwards to write, it is last:
+    the checksum can only be computed once every other byte is final.
+    """
+    if value is None:
+        return []
+    if not isinstance(value, dict):
+        raise PluginValidationError(plugin, "'checksum'", "must be an object or null.")
+    try:
+        spec = checksum_spec_from_mapping(dict(value), where="'checksum'")
+    except ValueError as exc:
+        raise PluginValidationError(plugin, "'checksum'", str(exc).split(": ", 1)[-1]) from exc
+    return [
+        {
+            "op": "checksum",
+            "algorithm": spec.algorithm,
+            "offset": spec.offset,
+            "covers": spec.coverage.value,
+        }
+    ]
 
 
 _DETECT_PLATFORMS = frozenset({"windows", "macos", "linux", "wine_prefix"})

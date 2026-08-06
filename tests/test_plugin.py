@@ -156,11 +156,18 @@ class TestRiskValidation:
 
 
 class TestChecksums:
-    def test_a_checksummed_plugin_is_refused_until_we_can_recalculate(self) -> None:
+    def test_a_checksum_becomes_a_pipeline_step(self) -> None:
+        """It goes first, so that writing recalculates it last of all."""
+        plugin = Plugin.from_mapping(
+            manifest(checksum={"algorithm": "crc32-le", "offset": 8, "covers": "after"})
+        )
+        assert next(step.op for step in plugin.pipeline.steps) == "checksum"
+
+    def test_a_checksum_the_build_cannot_compute_is_refused(self) -> None:
         """Writing a stale checksum produces a file the game rejects."""
         with pytest.raises(PluginValidationError) as caught:
             Plugin.from_mapping(manifest(checksum={"algorithm": "crc32", "offset": 8}))
-        assert "cannot" in caught.value.user_message
+        assert "crc32-le" in caught.value.user_message
 
 
 class TestDetectValidation:
