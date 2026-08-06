@@ -115,6 +115,26 @@ class UnknownPathTokenError(PathResolutionError):
         self.token = token
 
 
+class VdfParseError(SaveSmithError):
+    """A Valve KeyValues file could not be parsed.
+
+    Callers that know which file it was should catch this and re-raise
+    something more specific — :class:`SteamDataError` for Steam's own files.
+    """
+
+    code: ClassVar[str] = "vdf_parse_failed"
+
+    def __init__(self, source: str, reason: str, *, line: int | None = None) -> None:
+        where = f"{source}:{line}" if line is not None else source
+        super().__init__(
+            f"A Valve configuration file is damaged and could not be read: {reason}",
+            detail=f"{where}: {reason}",
+            source=source,
+            line=line,
+        )
+        self.line = line
+
+
 class SteamNotFoundError(SaveSmithError):
     """No Steam installation on this machine, or it is somewhere unusual."""
 

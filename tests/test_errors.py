@@ -17,6 +17,7 @@ from savesmith.core.errors import (
     SteamNotFoundError,
     UnknownPathTokenError,
     UnsupportedPlatformError,
+    VdfParseError,
     WinePrefixError,
 )
 
@@ -29,6 +30,7 @@ SAMPLES: list[SaveSmithError] = [
     UnknownPathTokenError("NOPE", "{NOPE}/save.dat", known_tokens=("APPDATA", "DOCUMENTS")),
     SteamNotFoundError(searched=("C:\\Program Files (x86)\\Steam",)),
     SteamDataError("libraryfolders.vdf", "the file ends in the middle of a block"),
+    VdfParseError("libraryfolders.vdf", "a block that is never closed", line=12),
     WinePrefixError("/bottles/hk", "it has no drive_c folder"),
     AmbiguousWineUserError("/bottles/hk", ("danil", "crossover")),
 ]

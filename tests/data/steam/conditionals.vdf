@@ -1,0 +1,9 @@
+// A file with platform conditionals and comments, as some Steam
+// configuration files ship them.
+"config"
+{
+	"platform"		"windows"	[$WIN32]
+	"platform"		"macos"		[$OSX]
+	"shared"		"yes"
+	// Trailing comment
+}

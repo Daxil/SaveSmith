@@ -1,0 +1,17 @@
+"LibraryFolders"
+{
+	"0"
+	{
+		"path"		"C:\\Program Files (x86)\\Steam"
+		"label"		""
+		"mounted"		"1"
+		"contentid"		"3456789012345678901"
+	}
+	"1"
+	{
+		"path"		"D:\\SteamLibrary"
+		"label"		"Games drive"
+		"mounted"		"1"
+		"contentid"		"1234567890123456789"
+	}
+}
