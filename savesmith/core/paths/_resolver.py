@@ -73,6 +73,34 @@ def extended_length_path(path: Path) -> str:
     return "\\\\?\\" + text.replace("/", "\\")
 
 
+def locate(base: Path, *segments: str) -> Path | None:
+    """Find ``base/seg1/seg2`` ignoring case, or ``None``.
+
+    For literal paths, where :meth:`PathResolver.resolve` would be wrong: a
+    Steam library at ``D:\\Games [SSD]`` contains glob characters, and treating
+    them as a pattern would silently find nothing.
+
+    Case matters here because Steam itself is inconsistent — ``steamapps`` and
+    ``SteamApps`` have both shipped — and a Mac volume may be case-sensitive.
+    """
+    current = base
+    for segment in segments:
+        direct = current / segment
+        if direct.exists():
+            current = direct
+            continue
+        wanted = segment.lower()
+        try:
+            with os.scandir(extended_length_path(current)) as entries:
+                match = next((e.name for e in entries if e.name.lower() == wanted), None)
+        except OSError:
+            return None
+        if match is None:
+            return None
+        current = current / match
+    return current
+
+
 class PathResolver:
     """Resolves plugin path patterns against one machine.
 

@@ -10,6 +10,7 @@ from savesmith.core.paths._resolver import (
     PathResolver,
     PathToken,
     extended_length_path,
+    locate,
 )
 from savesmith.core.paths._system import (
     FakeSystem,
@@ -28,4 +29,5 @@ __all__ = [
     "RegistryHive",
     "SystemFacade",
     "extended_length_path",
+    "locate",
 ]
