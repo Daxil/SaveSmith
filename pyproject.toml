@@ -4,7 +4,10 @@ version = "0.1.0"
 description = "Save file editor for offline games, including games no editor exists for yet"
 readme = "README.md"
 requires-python = "==3.12.*"
-dependencies = []
+dependencies = [
+    "cryptography>=50.0.0",
+    "msgpack>=1.2.1",
+]
 
 [build-system]
 requires = ["hatchling"]
@@ -69,3 +72,8 @@ warn_unused_ignores = true
 [[tool.mypy.overrides]]
 module = "savesmith.core.*"
 strict = true
+
+# msgpack ships no type information.
+[[tool.mypy.overrides]]
+module = "msgpack.*"
+ignore_missing_imports = true

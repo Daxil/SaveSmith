@@ -15,7 +15,13 @@ from savesmith.core.ops._registry import (
 )
 
 # Imported for the side effect of registering their operations.
-from savesmith.core.ops import binary, compress, structured  # noqa: F401  isort:skip
+from savesmith.core.ops import (  # noqa: F401  isort:skip
+    binary,
+    compress,
+    crypto,
+    packed,
+    structured,
+)
 
 __all__ = [
     "Hints",
