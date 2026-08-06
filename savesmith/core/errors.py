@@ -155,6 +155,37 @@ class PluginValidationError(SaveSmithError):
         self.where = where
 
 
+class FieldPathError(SaveSmithError):
+    """A field the plugin describes is not present in this particular save.
+
+    Normal and expected: saves differ by game version and by how far the player
+    has got. The editor hides such fields instead of failing.
+    """
+
+    code: ClassVar[str] = "field_not_in_save"
+
+    def __init__(self, path: str, reason: str) -> None:
+        super().__init__(
+            f"This save has no value at '{path}': {reason} "
+            f"The game version may differ from the one the plugin was made for.",
+            detail=f"{path}: {reason}",
+            path=path,
+        )
+        self.path = path
+
+
+class FieldValueError(SaveSmithError):
+    """A value the user typed is not acceptable for this field."""
+
+    code: ClassVar[str] = "field_value_rejected"
+
+    def __init__(self, label: str, reason: str) -> None:
+        # No separate detail: there is no technical context here beyond the
+        # sentence the user is already reading.
+        super().__init__(f"{label}: {reason}", label=label)
+        self.label = label
+
+
 class UnknownOperationError(SaveSmithError):
     """A plugin asks for a pipeline step this build does not implement."""
 

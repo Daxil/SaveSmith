@@ -11,6 +11,8 @@ import pytest
 
 from savesmith.core.errors import (
     AmbiguousWineUserError,
+    FieldPathError,
+    FieldValueError,
     PathResolutionError,
     PipelineError,
     PluginValidationError,
@@ -37,6 +39,8 @@ SAMPLES: list[SaveSmithError] = [
     PluginValidationError("hollow-knight", "pipeline step 1 (strip_prefix)", "is missing 'bytes'."),
     UnknownOperationError("decrypt_with_magic", known=("gzip", "json_parse")),
     PipelineError(0, "gzip", "the data does not start with a gzip header"),
+    FieldPathError("playerData.essence", "the save has no entry called 'essence'."),
+    FieldValueError("Health masks", "the largest allowed value is 11."),
     WinePrefixError("/bottles/hk", "it has no drive_c folder"),
     AmbiguousWineUserError("/bottles/hk", ("danil", "crossover")),
 ]
