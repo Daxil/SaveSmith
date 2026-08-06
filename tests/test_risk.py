@@ -52,8 +52,15 @@ class TestTiers:
         """Silence is not a clean bill of health."""
         result = assess(database=DATABASE, appid=UNKNOWN)
         assert result.tier is RiskTier.CAUTION
-        assert Acknowledgement.UNKNOWN_GAME in result.required
         assert not result.known
+
+    def test_an_unknown_game_is_not_walled_off_either(self) -> None:
+        """Almost no game is in the database; a wall here would be clicked past,
+        and that habit would carry over to the warnings that matter."""
+        result = assess(database=DATABASE, appid=UNKNOWN)
+        assert result.required == frozenset()
+        texts = " ".join(signal.text.get() for signal in result.signals)
+        assert "not in the risk database" in texts
 
     def test_no_appid_at_all_is_also_unknown(self) -> None:
         assert assess(database=DATABASE).tier is RiskTier.CAUTION

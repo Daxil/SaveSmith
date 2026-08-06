@@ -39,7 +39,11 @@ class CloudStatus:
     def evidence(self) -> str:
         if not self.enabled:
             return "no sign that Steam Cloud is used for this game"
-        return f"Steam Cloud is in use for {len(self.caches)} local account(s)"
+        if not self.caches:
+            # Declared by the plugin rather than seen on disk. Saying "in use
+            # for 0 accounts" would read like a contradiction.
+            return "this game uses Steam Cloud"
+        return f"Steam has synced this game for {len(self.caches)} local account(s)"
 
 
 def cloud_status(install: SteamInstall, appid: int) -> CloudStatus:

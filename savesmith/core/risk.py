@@ -65,8 +65,12 @@ class Acknowledgement(StrEnum):
     """Values feeding achievements or statistics are being changed."""
     STEAM_CLOUD = "steam_cloud"
     """The Steam Cloud steps have been carried out."""
-    UNKNOWN_GAME = "unknown_game"
-    """Nothing is known about this game, so nothing can be promised."""
+
+    # There is deliberately no acknowledgement for "we know nothing about this
+    # game". Almost no game is in the database, so demanding one would put a
+    # wall in front of every ordinary edit and teach people to click past it —
+    # which would then also get them past the warnings that matter. An unknown
+    # game is `caution`: shown plainly, and allowed.
 
 
 @dataclass(frozen=True)
@@ -165,9 +169,26 @@ def assess(
             else:
                 signals.append(database.signal(name))
     else:
-        # No entry means no knowledge, and no knowledge is not reassurance.
+        # No entry means no knowledge, and no knowledge is not reassurance —
+        # but it is also not a reason to stop someone. Caution, stated.
         tiers.append(RiskTier.CAUTION)
-        required.add(Acknowledgement.UNKNOWN_GAME)
+        signals.append(
+            Signal(
+                name="unknown-game",
+                text=Localized(
+                    {
+                        "en": (
+                            "This game is not in the risk database, so nothing is known "
+                            "about how it treats edited saves."
+                        ),
+                        "ru": (
+                            "Этой игры нет в базе рисков, поэтому про её отношение к "
+                            "правленым сейвам ничего не известно."
+                        ),
+                    }
+                ),
+            )
+        )
 
     for name in found_anticheat:
         signals.append(database.signal(name))
