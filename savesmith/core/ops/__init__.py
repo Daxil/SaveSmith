@@ -22,6 +22,7 @@ from savesmith.core.ops import (  # noqa: F401  isort:skip
     crypto,
     fromsoft,
     gvas,
+    lzstring,
     packed,
     structured,
 )
