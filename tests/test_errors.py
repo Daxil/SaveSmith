@@ -30,6 +30,7 @@ from savesmith.core.errors import (
 )
 from savesmith.core.risk import Acknowledgement
 from savesmith.core.session import ConsentRequiredError
+from savesmith.core.store import PluginInstallError
 
 # One constructed instance per error class. The registry test below fails if a
 # new error class is added without an entry here, so this cannot silently rot.
@@ -50,6 +51,7 @@ SAMPLES: list[SaveSmithError] = [
     FieldValueError("Health masks", "the largest allowed value is 11."),
     ConsentRequiredError(frozenset({Acknowledgement.BAN_RISK}), steps=(1, 2)),
     SandboxError("it did not finish within 10 seconds", detail="timeout"),
+    PluginInstallError("shared-game", "it is not a readable archive."),
     WinePrefixError("/bottles/hk", "it has no drive_c folder"),
     AmbiguousWineUserError("/bottles/hk", ("danil", "crossover")),
 ]
