@@ -19,6 +19,7 @@ from savesmith.core.ops import (  # noqa: F401  isort:skip
     binary,
     compress,
     crypto,
+    gvas,
     packed,
     structured,
 )
