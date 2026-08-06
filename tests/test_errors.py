@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import pytest
 
+from savesmith.agent.sandbox import SandboxError
 from savesmith.core.errors import (
     AmbiguousWineUserError,
     BackupError,
@@ -48,6 +49,7 @@ SAMPLES: list[SaveSmithError] = [
     FieldPathError("playerData.essence", "the save has no entry called 'essence'."),
     FieldValueError("Health masks", "the largest allowed value is 11."),
     ConsentRequiredError(frozenset({Acknowledgement.BAN_RISK}), steps=(1, 2)),
+    SandboxError("it did not finish within 10 seconds", detail="timeout"),
     WinePrefixError("/bottles/hk", "it has no drive_c folder"),
     AmbiguousWineUserError("/bottles/hk", ("danil", "crossover")),
 ]
