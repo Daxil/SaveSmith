@@ -1,0 +1,116 @@
+{
+  "schema": 1,
+  "updated": "2026-08-06",
+  "note": {
+    "en": "Ban policies change without notice. This database is help, not a guarantee; the final decision and the responsibility are the user's.",
+    "ru": "Ban-политики меняются без предупреждения. Эта база — помощь, а не гарантия; финальное решение и ответственность за пользователем."
+  },
+  "games": {
+    "1245620": {
+      "title": "ELDEN RING",
+      "tier": "blocked",
+      "signals": ["fromsoftware-save-detection", "easy-anti-cheat", "online-invasions"],
+      "reason": {
+        "en": "FromSoftware detects modified saves and moves the player into a separate matchmaking pool. The game ships with Easy Anti-Cheat and single player shares progression with online play.",
+        "ru": "FromSoftware детектит изменённые сейвы и переводит игрока в отдельный матчмейкинг-пул. Игра поставляется с Easy Anti-Cheat, а сингл делит прогрессию с онлайном."
+      }
+    },
+    "374320": {
+      "title": "DARK SOULS III",
+      "tier": "blocked",
+      "signals": ["fromsoftware-save-detection", "easy-anti-cheat", "online-invasions"],
+      "reason": {
+        "en": "Modified saves are detected and lead to a soft ban into the cheater matchmaking pool.",
+        "ru": "Изменённые сейвы детектятся и ведут к soft-ban в матчмейкинг-пул нарушителей."
+      }
+    },
+    "814380": {
+      "title": "Sekiro: Shadows Die Twice",
+      "tier": "caution",
+      "signals": ["fromsoftware-save-detection"],
+      "reason": {
+        "en": "Single player only, but FromSoftware's save integrity checks still apply and achievements can be affected.",
+        "ru": "Только одиночная игра, но проверки целостности сейвов FromSoftware действуют, и это может задеть достижения."
+      }
+    },
+    "271590": {
+      "title": "Grand Theft Auto V",
+      "tier": "blocked",
+      "signals": ["shared-progression", "online-service-ban"],
+      "reason": {
+        "en": "Single player and GTA Online share an account. Editing has led to online bans.",
+        "ru": "Сингл и GTA Online делят аккаунт. Правка приводила к банам в онлайне."
+      }
+    },
+    "218620": {
+      "title": "PAYDAY 2",
+      "tier": "blocked",
+      "signals": ["shared-progression", "online-service-ban"],
+      "reason": {
+        "en": "Progression is shared with online play and is checked server side.",
+        "ru": "Прогрессия общая с онлайном и проверяется на стороне сервера."
+      }
+    },
+    "367520": {
+      "title": "Hollow Knight",
+      "tier": "safe",
+      "signals": [],
+      "reason": {
+        "en": "Single player only. No anti-cheat, no online progression.",
+        "ru": "Только одиночная игра. Античита и онлайн-прогрессии нет."
+      }
+    },
+    "413150": {
+      "title": "Stardew Valley",
+      "tier": "caution",
+      "signals": ["co-op", "achievements"],
+      "reason": {
+        "en": "Mostly single player, but saves are shared with co-op partners and achievements are tied to progress.",
+        "ru": "В основном одиночная, но сейвы разделяются с напарниками по кооперативу, а достижения привязаны к прогрессу."
+      }
+    },
+    "731040": {
+      "title": "The Invincible",
+      "tier": "safe",
+      "signals": [],
+      "reason": {
+        "en": "Single player narrative game. No multiplayer, no anti-cheat.",
+        "ru": "Одиночная нарративная игра. Мультиплеера и античита нет."
+      }
+    }
+  },
+  "anticheat_signals": {
+    "easy-anti-cheat": {
+      "en": "Easy Anti-Cheat is installed with this game.",
+      "ru": "С игрой установлен Easy Anti-Cheat."
+    },
+    "battleye": {
+      "en": "BattlEye is installed with this game.",
+      "ru": "С игрой установлен BattlEye."
+    },
+    "fromsoftware-save-detection": {
+      "en": "This developer is known to detect modified saves.",
+      "ru": "Этот разработчик известен детектом изменённых сейвов."
+    },
+    "shared-progression": {
+      "en": "Single player and online play share progression.",
+      "ru": "Сингл и онлайн делят прогрессию."
+    },
+    "online-invasions": {
+      "en": "Other players can join your game, which is when detection happens.",
+      "ru": "Другие игроки могут подключаться к вашей игре — именно тогда и срабатывает детект."
+    },
+    "online-service-ban": {
+      "en": "The publisher has banned accounts for edited saves.",
+      "ru": "Издатель банил аккаунты за правленые сейвы."
+    },
+    "achievements": {
+      "en": "Achievements are tied to the values you can change here.",
+      "ru": "Достижения привязаны к значениям, которые здесь можно менять."
+    },
+    "co-op": {
+      "en": "This save may be shared with other players in co-op.",
+      "ru": "Этот сейв может разделяться с другими игроками в кооперативе."
+    }
+  }
+}

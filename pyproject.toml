@@ -54,6 +54,13 @@ select = [
     "PTH",      # use pathlib
     "RUF",
 ]
+ignore = [
+    # This project ships Russian user-facing strings; Cyrillic letters that
+    # look like Latin ones are the point, not a mistake.
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
 
 [tool.ruff.lint.per-file-ignores]
 # Tests may shadow builtins and use asserts freely.

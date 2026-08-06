@@ -27,6 +27,8 @@ from savesmith.core.errors import (
     VdfParseError,
     WinePrefixError,
 )
+from savesmith.core.risk import Acknowledgement
+from savesmith.core.session import ConsentRequiredError
 
 # One constructed instance per error class. The registry test below fails if a
 # new error class is added without an entry here, so this cannot silently rot.
@@ -45,6 +47,7 @@ SAMPLES: list[SaveSmithError] = [
     SaveInUseError("/games/user1.dat"),
     FieldPathError("playerData.essence", "the save has no entry called 'essence'."),
     FieldValueError("Health masks", "the largest allowed value is 11."),
+    ConsentRequiredError(frozenset({Acknowledgement.BAN_RISK}), steps=(1, 2)),
     WinePrefixError("/bottles/hk", "it has no drive_c folder"),
     AmbiguousWineUserError("/bottles/hk", ("danil", "crossover")),
 ]
