@@ -1,0 +1,64 @@
+{
+  "schema": 1,
+  "id": "the-invincible",
+  "version": 1,
+  "game": "The Invincible",
+  "engine": "unreal-gvas",
+  "confidence": "probable",
+  "steam_appid": 731040,
+  "detect": {
+    "paths": {
+      "windows": ["{LOCALAPPDATA}/TheInvincible/Saved/SaveGames/*.sav"],
+      "wine_prefix": ["drive_c/users/{WINEUSER}/AppData/Local/TheInvincible/Saved/SaveGames/*.sav"]
+    },
+    "magic_hex": "47564153"
+  },
+  "risk": {
+    "tier": "safe",
+    "reason": {
+      "en": "Single player narrative game. No multiplayer, no anti-cheat, no shared progression.",
+      "ru": "Одиночная нарративная игра. Мультиплеера, античита и общей прогрессии нет."
+    },
+    "steam_cloud": true
+  },
+  "pipeline": [{ "op": "gvas" }],
+  "checksum": null,
+  "fields": [
+    {
+      "path": ["properties", "SaveVersion"],
+      "label": { "en": "Save format version", "ru": "Версия формата сохранения" },
+      "type": "int",
+      "min": 1,
+      "max": 999,
+      "group": { "en": "Technical", "ru": "Техническое" },
+      "advanced": true,
+      "warn": {
+        "en": "Changing this can make the game reject the save.",
+        "ru": "Изменение может привести к тому, что игра отвергнет сейв."
+      }
+    },
+    {
+      "path": ["properties", "Finished"],
+      "label": { "en": "Game completed", "ru": "Игра пройдена" },
+      "type": "bool",
+      "group": { "en": "Progress", "ru": "Прогресс" }
+    },
+    {
+      "path": ["properties", "ObjectiveTime"],
+      "label": { "en": "Objective timer", "ru": "Таймер задачи" },
+      "type": "float",
+      "min": 0,
+      "group": { "en": "Progress", "ru": "Прогресс" }
+    },
+    {
+      "path": ["properties", "CheckpointName"],
+      "label": { "en": "Checkpoint", "ru": "Чекпоинт" },
+      "type": "string",
+      "group": { "en": "Progress", "ru": "Прогресс" },
+      "warn": {
+        "en": "Must be a checkpoint name the game knows, or loading will fail.",
+        "ru": "Должно быть именем чекпоинта, известным игре, иначе загрузка сорвётся."
+      }
+    }
+  ]
+}

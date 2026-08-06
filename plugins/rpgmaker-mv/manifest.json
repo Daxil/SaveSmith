@@ -1,0 +1,48 @@
+{
+  "schema": 1,
+  "id": "rpgmaker-mv",
+  "version": 1,
+  "game": "RPG Maker MV / MZ (any game)",
+  "engine": "rpgmaker-mv",
+  "confidence": "experimental",
+  "detect": {
+    "paths": {},
+    "magic_hex": null
+  },
+  "risk": {
+    "tier": "caution",
+    "reason": {
+      "en": "Covers every game built with RPG Maker MV or MZ, so nothing specific is known about this one. Almost all are single player, but an unknown game is never assumed safe.",
+      "ru": "Покрывает любую игру на RPG Maker MV или MZ, поэтому про конкретную ничего не известно. Почти все они одиночные, но неизвестная игра безопасной не считается."
+    },
+    "steam_cloud": false
+  },
+  "pipeline": [{ "op": "lzstring" }, { "op": "json_parse" }],
+  "checksum": null,
+  "fields": [
+    {
+      "path": "party._gold",
+      "label": { "en": "Gold", "ru": "Золото" },
+      "type": "int",
+      "min": 0,
+      "max": 99999999,
+      "group": { "en": "Resources", "ru": "Ресурсы" }
+    },
+    {
+      "path": "party._steps",
+      "label": { "en": "Steps taken", "ru": "Пройдено шагов" },
+      "type": "int",
+      "min": 0,
+      "group": { "en": "Statistics", "ru": "Статистика" },
+      "achievement": true
+    },
+    {
+      "path": "playtime",
+      "label": { "en": "Play time, seconds", "ru": "Время игры, секунды" },
+      "type": "int",
+      "min": 0,
+      "group": { "en": "Statistics", "ru": "Статистика" },
+      "achievement": true
+    }
+  ]
+}

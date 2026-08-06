@@ -1,0 +1,27 @@
+{
+  "schema": 1,
+  "id": "unity-es3",
+  "version": 1,
+  "game": "Unity Easy Save 3 (any game, unencrypted)",
+  "engine": "unity-es3",
+  "confidence": "experimental",
+  "detect": {
+    "paths": {
+      "windows": ["{LOCALLOW}/*/*/*.es3", "{APPDATA}/*/*/*.es3"],
+      "macos": ["{APPDATA}/*/*/*.es3"],
+      "wine_prefix": ["drive_c/users/{WINEUSER}/AppData/LocalLow/*/*/*.es3"]
+    },
+    "magic_hex": null
+  },
+  "risk": {
+    "tier": "caution",
+    "reason": {
+      "en": "Covers any Unity game using Easy Save 3, so nothing specific is known about this one. An unknown game is never assumed safe.",
+      "ru": "Покрывает любую игру на Unity с Easy Save 3, поэтому про конкретную ничего не известно. Неизвестная игра безопасной не считается."
+    },
+    "steam_cloud": false
+  },
+  "pipeline": [{ "op": "json_parse" }],
+  "checksum": null,
+  "fields": []
+}
