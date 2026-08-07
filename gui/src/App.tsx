@@ -20,6 +20,7 @@ import {
   type FoundSave,
   type Session,
 } from "./rpc";
+import { Updates } from "./Updates";
 import { GameScreen } from "./screens/GameScreen";
 import { NumberScreen } from "./screens/NumberScreen";
 import { PickGame } from "./screens/PickGame";
@@ -92,6 +93,8 @@ export function App() {
         {version && <span className="version">{version}</span>}
         {busy && <span className="busy">…</span>}
       </header>
+
+      <Updates />
 
       {failure && (
         <div className="failure" role="alert">

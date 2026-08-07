@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SaveSmith — редактор сохранений для одиночных игр</title>
+    <meta
+      name="description"
+      content="Указываешь папку, куда установлена игра. SaveSmith сам находит сохранение, понимает формат и показывает, что можно поменять. Перед любой записью делает копию."
+    />
+    <style>
+      /*
+        One page, no build step, no dependencies. It exists so that a link can
+        be handed to somebody who then presses one button — not so that it can
+        be a website.
+      */
+      :root {
+        --bg: #17191f;
+        --panel: #1e212a;
+        --line: #2c3040;
+        --text: #e7e9ef;
+        --muted: #99a0b2;
+        --accent: #7cb0f5;
+        color-scheme: dark;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        padding: 0 20px 80px;
+        background: var(--bg);
+        color: var(--text);
+        font: 16px/1.6 -apple-system, "Segoe UI", system-ui, sans-serif;
+      }
+      main { max-width: 720px; margin: 0 auto; }
+      h1 { font-size: 34px; margin: 56px 0 8px; }
+      .lead { font-size: 18px; color: var(--muted); margin: 0 0 32px; }
+      .get {
+        background: var(--panel); border: 1px solid var(--line);
+        border-radius: 12px; padding: 22px; margin-bottom: 14px;
+      }
+      .download {
+        display: inline-block; padding: 14px 26px; border-radius: 8px;
+        background: var(--accent); color: #17191f; font-size: 18px;
+        font-weight: 600; text-decoration: none;
+      }
+      .download:hover { filter: brightness(1.08); }
+      .for-what { color: var(--muted); font-size: 14px; margin: 12px 0 0; }
+      .other { margin-top: 14px; font-size: 14px; }
+      .other summary { color: var(--muted); cursor: pointer; }
+      .other ul { margin: 10px 0 0; padding-left: 20px; }
+      .other a { color: var(--accent); }
+      h2 { font-size: 20px; margin: 40px 0 10px; }
+      .warn {
+        border-left: 3px solid var(--accent); padding: 2px 0 2px 16px;
+        color: var(--muted);
+      }
+      code {
+        background: var(--panel); padding: 2px 6px; border-radius: 4px;
+        font-size: 14px; word-break: break-all;
+      }
+      footer { margin-top: 48px; color: var(--muted); font-size: 14px; }
+      footer a { color: var(--accent); }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>SaveSmith</h1>
+      <p class="lead">
+        Редактор сохранений для одиночных игр. Работает даже с играми, под которые
+        редактора не существует.
+      </p>
+
+      <div class="get">
+        <a class="download" id="download" href="https://github.com/Daxil/SaveSmith/releases/latest">
+          Скачать
+        </a>
+        <p class="for-what" id="for-what">Определяю, что у тебя за система…</p>
+
+        <details class="other">
+          <summary>Другие файлы: другая система, командная строка</summary>
+          <ul id="everything">
+            <li>
+              <a href="https://github.com/Daxil/SaveSmith/releases/latest">
+                Все файлы последнего релиза
+              </a>
+            </li>
+          </ul>
+        </details>
+      </div>
+
+      <h2>Что это делает</h2>
+      <p>
+        Указываешь папку, куда установлена игра, — или просто выбираешь её из списка,
+        программа сама находит установленные. Дальше она находит сохранение, понимает,
+        в каком оно формате, и показывает, что можно поменять: золото, уровень,
+        предметы. Перед любой записью делает копию, откатить можно одной кнопкой.
+      </p>
+      <p>
+        Если игры нет в списке поддерживаемых — это как раз тот случай, ради которого
+        всё затевалось. Говоришь программе число, которое видишь на экране игры, и она
+        находит, где оно лежит в файле, даже если файл зашифрован и подписан
+        контрольной суммой.
+      </p>
+
+      <h2>Первый запуск: система будет ругаться</h2>
+      <p class="warn">
+        У программы нет цифровой подписи — сертификаты стоят денег, которых у проекта
+        пока нет. Ни macOS, ни Windows не умеют отличить «автор не платит $99 в год» от
+        «это вирус», поэтому пугают одинаково.<br /><br />
+        <strong>macOS:</strong> Системные настройки → Конфиденциальность и безопасность →
+        внизу «Всё равно открыть».<br />
+        <strong>Windows:</strong> в окне SmartScreen — «Подробнее» → «Выполнить в любом
+        случае».<br /><br />
+        Исходники открыты, так что верить на слово не обязательно: программу можно
+        собрать самому.
+      </p>
+
+      <h2>О чём надо знать</h2>
+      <p class="warn">
+        Это для одиночных оффлайн-игр, не для онлайна. Правка сохранений часто нарушает
+        пользовательское соглашение игры — ответственность за последствия на тебе.
+        И главное: <strong>закрой игру перед правкой</strong>, иначе она перезапишет файл
+        своей версией и правка исчезнет.
+      </p>
+
+      <footer>
+        <a href="https://github.com/Daxil/SaveSmith">Исходники и все релизы на GitHub</a>
+        · MIT
+      </footer>
+    </main>
+
+    <script>
+      /*
+       * Guess the system, offer one file, and never hide the others.
+       *
+       * A guess can be wrong — a Mac browser reporting an Intel platform under
+       * Rosetta, a phone, something unheard of — so the fold below always
+       * lists everything, and the button falls back to the release page rather
+       * than to a file that might not run.
+       */
+      const REPO = "https://github.com/Daxil/SaveSmith";
+      const LATEST = `${REPO}/releases/latest`;
+      const asset = (name) => `${REPO}/releases/latest/download/${name}`;
+
+      const BUILDS = [
+        { id: "windows-x64", label: "Windows", app: "SaveSmith-windows-x64-setup.exe", cli: "savesmith-windows-x64.exe" },
+        { id: "macos-arm64", label: "macOS, Apple Silicon", app: "SaveSmith-macos-arm64.dmg", cli: "savesmith-macos-arm64" },
+        { id: "macos-x64", label: "macOS, Intel", app: "SaveSmith-macos-x64.dmg", cli: "savesmith-macos-x64" },
+      ];
+
+      /*
+       * The version is not known to a static page, and the release assets carry
+       * it in their names. Rather than fetch the API — which is rate limited and
+       * would leave the button dead until it answered — the button points at
+       * the release page's "latest" redirect for a *named* asset. GitHub only
+       * serves that when the name matches exactly, so the page asks the API
+       * once, quietly, and falls back to the release page if that fails.
+       */
+      function show(build, version) {
+        const button = document.getElementById("download");
+        const caption = document.getElementById("for-what");
+        if (build && version) {
+          const name = build.app.replace("SaveSmith-", `SaveSmith-${version}-`);
+          button.href = asset(name);
+          button.textContent = `Скачать для ${build.label}`;
+          caption.textContent = `Версия ${version}. Не твоя система? Все файлы — ниже.`;
+        } else if (build) {
+          button.textContent = `Скачать для ${build.label}`;
+          caption.textContent = "Открою страницу релиза — файл для твоей системы там первый.";
+        } else {
+          caption.textContent = "Не понял, что у тебя за система. Выбери файл сам.";
+        }
+      }
+
+      function listEverything(version) {
+        const list = document.getElementById("everything");
+        list.innerHTML = "";
+        for (const build of BUILDS) {
+          for (const [kind, file] of [["Окно", build.app], ["Командная строка", build.cli]]) {
+            const named = version
+              ? file.replace(/^(SaveSmith|savesmith)-/, `$1-${version}-`)
+              : null;
+            const item = document.createElement("li");
+            const link = document.createElement("a");
+            link.href = named ? asset(named) : LATEST;
+            link.textContent = `${kind} — ${build.label}`;
+            item.append(link);
+            list.append(item);
+          }
+        }
+        const all = document.createElement("li");
+        all.innerHTML = `<a href="${LATEST}">Страница релиза целиком, с контрольными суммами</a>`;
+        list.append(all);
+      }
+
+      function guess() {
+        const platform = `${navigator.platform} ${navigator.userAgent}`;
+        if (/Win/i.test(platform)) return BUILDS[0];
+        if (/Mac/i.test(platform)) {
+          // Every Mac browser says "Intel" in its user agent, Apple Silicon
+          // included. What actually differs is the GPU string, so the modern
+          // machines are found by asking WebGL rather than by believing the
+          // user agent.
+          try {
+            const gl = document.createElement("canvas").getContext("webgl");
+            const info = gl && gl.getExtension("WEBGL_debug_renderer_info");
+            const renderer = info ? gl.getParameter(info.UNMASKED_RENDERER_WEBGL) : "";
+            if (/Apple (M\d|GPU)/i.test(String(renderer))) return BUILDS[1];
+          } catch (problem) {
+            /* Falling through to the Intel build is the safe way to be wrong:
+               it runs on both machines, just slower. */
+          }
+          return BUILDS[2];
+        }
+        return null;
+      }
+
+      const build = guess();
+      show(build, null);
+      listEverything(null);
+
+      fetch("https://api.github.com/repos/Daxil/SaveSmith/releases/latest")
+        .then((answer) => (answer.ok ? answer.json() : Promise.reject(answer.status)))
+        .then((release) => {
+          const version = String(release.tag_name || "").replace(/^v/, "");
+          if (!version) return;
+          show(build, version);
+          listEverything(version);
+        })
+        .catch(() => {
+          /* Rate limited, offline, or no release yet. The button already points
+             somewhere that works. */
+        });
+    </script>
+  </body>
+</html>

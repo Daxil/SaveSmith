@@ -242,3 +242,12 @@ details summary { color: var(--muted); cursor: pointer; margin-top: 20px; }
 }
 .carried.over { border-color: var(--accent); }
 .carried .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* "There is a newer version." A strip, not a dialog: nobody should have to
+   dismiss something before they can get on with editing a save. */
+.update {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 10px 14px; margin-bottom: 18px;
+  border: 1px solid var(--accent); border-radius: 8px; background: #1e2431;
+}
+.update button { margin-left: auto; }

@@ -163,6 +163,13 @@ fn main() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
+        // Updating itself, and restarting into the new version afterwards.
+        // Both are asked for by the window, never done behind the user's back:
+        // this program rewrites save files, and one that silently replaced
+        // itself between two edits would be a different program than the one
+        // somebody agreed to run.
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             let (events, child) = app.shell().sidecar("savesmith")?.args(["rpc"]).spawn()?;
             app.manage(Backend::new(child));

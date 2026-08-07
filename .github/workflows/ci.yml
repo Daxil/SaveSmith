@@ -168,8 +168,28 @@ jobs:
       # Runs tsc, builds the frontend, copies the backend in as a sidecar and
       # bundles the lot.
       - name: Build the app
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
         working-directory: gui
         run: npm run app:build
+
+      # A tag build additionally produces what the installed app downloads when
+      # it updates itself, each piece signed with the updater key. Kept to tags
+      # because signing needs the private key, and a branch build must stay
+      # green for anyone who does not have it — a fork, or a pull request.
+      - name: Build the app, with an update people can install
+        if: startsWith(github.ref, 'refs/tags/v')
+        working-directory: gui
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
+        run: |
+          if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            echo "::error::TAURI_SIGNING_PRIVATE_KEY is not set, so this release" \
+                 "would ship an app that can never update itself. Add the secret."
+            exit 1
+          fi
+          npx tauri build --config src-tauri/tauri.release.conf.json
+        shell: bash
 
       - uses: actions/upload-artifact@v4
         with:
@@ -177,6 +197,9 @@ jobs:
           path: |
             gui/src-tauri/target/release/bundle/dmg/*.dmg
             gui/src-tauri/target/release/bundle/nsis/*.exe
+            gui/src-tauri/target/release/bundle/macos/*.app.tar.gz
+            gui/src-tauri/target/release/bundle/macos/*.app.tar.gz.sig
+            gui/src-tauri/target/release/bundle/nsis/*-setup.exe.sig
           if-no-files-found: error
 
   # A tag becomes a page with files on it and a permanent link. Without this a
@@ -217,27 +240,73 @@ jobs:
         with:
           path: artifacts
 
-      # Downloaded, every file is called savesmith or SaveSmith_0.1.0.dmg and
-      # they land in folders named after runner images. On a release page they
-      # have to say what they are without their folder.
+      # Downloaded, every file is called savesmith or SaveSmith_0.1.0.dmg, and
+      # how deeply they are nested depends on which patterns happened to match
+      # — so they are searched for rather than reached by path. On a release
+      # page a file has to say what it is without its folder.
       - name: Name the files after what they are
         shell: bash
         run: |
+          set -euo pipefail
           VERSION="${GITHUB_REF_NAME#v}"
           mkdir -p release
-          cp artifacts/savesmith-windows-latest/savesmith.exe \
-             "release/savesmith-$VERSION-windows-x64.exe"
-          cp artifacts/savesmith-macos-15/savesmith \
-             "release/savesmith-$VERSION-macos-arm64"
-          cp artifacts/savesmith-macos-15-intel/savesmith \
-             "release/savesmith-$VERSION-macos-x64"
-          cp artifacts/savesmith-app-windows-latest/*.exe \
-             "release/SaveSmith-$VERSION-windows-x64-setup.exe"
-          cp artifacts/savesmith-app-macos-15/*.dmg \
-             "release/SaveSmith-$VERSION-macos-arm64.dmg"
-          cp artifacts/savesmith-app-macos-15-intel/*.dmg \
-             "release/SaveSmith-$VERSION-macos-x64.dmg"
+
+          # take <artifact> <pattern> <new name>
+          take() {
+            local found
+            found=$(find "artifacts/$1" -name "$2" -type f -print -quit)
+            if [ -z "$found" ]; then
+              echo "::error::$2 is missing from $1"
+              exit 1
+            fi
+            cp "$found" "release/$3"
+          }
+
+          take savesmith-windows-latest    'savesmith.exe' "savesmith-$VERSION-windows-x64.exe"
+          take savesmith-macos-15          'savesmith'     "savesmith-$VERSION-macos-arm64"
+          take savesmith-macos-15-intel    'savesmith'     "savesmith-$VERSION-macos-x64"
+
+          take savesmith-app-windows-latest '*-setup.exe' "SaveSmith-$VERSION-windows-x64-setup.exe"
+          take savesmith-app-macos-15       '*.dmg'       "SaveSmith-$VERSION-macos-arm64.dmg"
+          take savesmith-app-macos-15-intel '*.dmg'       "SaveSmith-$VERSION-macos-x64.dmg"
+
+          # What the installed app downloads when it updates itself, with the
+          # detached signature beside each one.
+          #
+          # Renamed by hand, and this is not cosmetic: Tauri calls the macOS
+          # update SaveSmith.app.tar.gz on both architectures, so collecting
+          # them into one folder would have an Apple Silicon build quietly
+          # overwrite the Intel one and half the users would update into a
+          # program their machine cannot run.
+          updater() { # <artifact> <new base name>
+            local tarball
+            tarball=$(find "artifacts/$1" -name '*.app.tar.gz' -type f -print -quit)
+            [ -n "$tarball" ] || return 0
+            cp "$tarball" "release/$2"
+            cp "$tarball.sig" "release/$2.sig"
+          }
+          updater savesmith-app-macos-15       "SaveSmith-$VERSION-macos-arm64.app.tar.gz"
+          updater savesmith-app-macos-15-intel "SaveSmith-$VERSION-macos-x64.app.tar.gz"
+
+          # The Windows update is the same installer a first-time user runs, so
+          # its signature travels under the name that installer now has.
+          setup_sig=$(find artifacts/savesmith-app-windows-latest -name '*-setup.exe.sig' \
+            -type f -print -quit)
+          if [ -n "$setup_sig" ]; then
+            cp "$setup_sig" "release/SaveSmith-$VERSION-windows-x64-setup.exe.sig"
+          fi
           ls -la release
+
+      # The installed app asks one URL whether there is a newer version. Built
+      # from the files just collected, so it can never name one that is not
+      # there — a manifest pointing at a missing file turns every update into a
+      # failed download.
+      - name: The file the installed app asks
+        run: |
+          node gui/scripts/updater-manifest.mjs "${GITHUB_REF_NAME#v}" release \
+            "$(git tag -l --format='%(contents:subject)' "$GITHUB_REF_NAME")"
+          mv latest.json release/
+          cat release/latest.json
 
       # So that somebody who downloaded over a bad connection can tell, and so
       # that "is this the file you built?" has an answer.

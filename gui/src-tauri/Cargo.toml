@@ -17,6 +17,12 @@ tauri-plugin-dialog = "2"
 tauri-plugin-shell = "2"
 tokio = { version = "1", features = ["sync"] }
 
+# Updating itself. Desktop only: there is no mobile build, and the updater
+# crate does not exist for one.
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+tauri-plugin-process = "2"
+tauri-plugin-updater = "2"
+
 # The shell exists to carry messages, not to be fast. Optimising for size keeps
 # the download small, which matters more to somebody grabbing one file from a
 # CI artifact than a few milliseconds of startup ever will.
