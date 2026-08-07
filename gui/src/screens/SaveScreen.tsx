@@ -12,6 +12,7 @@
 import { useState } from "react";
 
 import type { Backend, Field, Session } from "../rpc";
+import { Inventory } from "./Inventory";
 
 export function SaveScreen({
   backend,
@@ -117,6 +118,13 @@ export function SaveScreen({
           </ul>
         </div>
       ))}
+
+      <Inventory
+        backend={backend}
+        session={session}
+        onSession={onSession}
+        onFailure={onFailure}
+      />
 
       <footer>
         {session.pending.length > 0 && (

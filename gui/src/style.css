@@ -156,3 +156,89 @@ details summary { color: var(--muted); cursor: pointer; margin-top: 20px; }
 .number .group h3 { color: var(--muted); font-family: ui-monospace, monospace; }
 .everything { margin-top: 14px; }
 .agree-all { background: var(--warn); color: #17191f; border-color: var(--warn); font-weight: 600; }
+
+/* The inventory: pictures with names under them, and a pool to drag from. */
+.inventory { margin-top: 28px; border-top: 1px solid var(--line); padding-top: 18px; }
+.inventory h2 { font-size: 15px; margin: 0 0 12px; }
+.inventory .tabs { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+.inventory .tabs button.chosen { border-color: var(--accent); background: #232838; }
+.inventory .count {
+  color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums;
+}
+
+.inventory-panes { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+@media (max-width: 760px) { .inventory-panes { grid-template-columns: 1fr; } }
+
+.inventory section {
+  background: var(--panel); border: 1px solid var(--line);
+  border-radius: 8px; padding: 12px; min-width: 0;
+}
+.inventory section header {
+  display: flex; align-items: center; gap: 10px;
+  padding: 0 0 10px; border: 0; margin: 0;
+}
+.inventory section h3 { font-size: 14px; margin: 0; flex: 1; }
+.inventory section header input { width: 150px; }
+
+/* The drop target says so while something is over it, and only then. */
+.held { transition: border-color 120ms, background 120ms; }
+.held.over { border-color: var(--accent); background: #232838; }
+
+.tiles {
+  list-style: none; margin: 0; padding: 0; display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(92px, 1fr));
+  gap: 8px; max-height: 340px; overflow-y: auto;
+}
+.tile {
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  padding: 8px 4px; border: 1px solid var(--line); border-radius: 6px;
+  background: #1a1d25; text-align: center; position: relative;
+}
+.tile .name {
+  font-size: 12px; line-height: 1.25; color: var(--text);
+  /* Two lines, then an ellipsis: a grid of tiles of different heights is
+     harder to read than a name that had to be cut short. */
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden; word-break: break-word;
+}
+.tile .controls { display: flex; gap: 4px; align-items: center; }
+.tile .controls input {
+  width: 56px; padding: 3px 6px; font-size: 13px; text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.tile .drop { padding: 3px 7px; line-height: 1; color: var(--muted); }
+.tile .drop:hover { color: var(--bad); border-color: var(--bad); }
+
+.tile.choosable { padding: 0; }
+.tile.choosable button {
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  width: 100%; height: 100%; padding: 8px 4px; border: 0; background: none;
+  cursor: grab; text-align: center;
+}
+.tile.choosable button:active { cursor: grabbing; }
+.tile.choosable.held { border-color: #3c4257; }
+.tile.choosable .tag {
+  position: absolute; top: 2px; right: 2px; font-size: 10px;
+  padding: 1px 5px; border-radius: 999px; background: #2c3040; color: var(--muted);
+}
+
+.picture {
+  width: 44px; height: 44px; border-radius: 4px; display: block;
+  background-repeat: no-repeat; image-rendering: pixelated; flex: none;
+}
+.picture.blank {
+  display: grid; place-items: center; background: #2c3040;
+  color: var(--muted); font-size: 18px; font-weight: 600;
+}
+
+/* The tile that follows the cursor. Nothing under it should react to the
+   pointer, or the drop zone would report itself as "not under the cursor". */
+.carried {
+  position: fixed; z-index: 20; pointer-events: none;
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 10px 6px 6px; border-radius: 6px;
+  border: 1px solid var(--line); background: var(--panel);
+  box-shadow: 0 6px 18px #0009; font-size: 12px; max-width: 220px;
+}
+.carried.over { border-color: var(--accent); }
+.carried .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

@@ -41,6 +41,16 @@ MANIFEST: dict[str, Any] = {
         },
         {"path": "kills", "label": {"en": "Kills"}, "type": "int", "achievement": True},
     ],
+    "containers": [
+        {
+            "id": "bag",
+            "label": {"en": "Items", "ru": "Предметы"},
+            "path": "items",
+            "shape": "map",
+            "max_count": 99,
+            "catalog": "rpgmaker:items",
+        }
+    ],
 }
 
 
@@ -61,7 +71,8 @@ def server(home: FakeSystem) -> Server:
 @pytest.fixture
 def save(tmp_path: Path) -> Path:
     path = tmp_path / "save.dat"
-    path.write_bytes(gzip.compress(json.dumps({"gold": 100, "kills": 3}).encode(), mtime=0))
+    contents = {"gold": 100, "kills": 3, "items": {"1": 2}}
+    path.write_bytes(gzip.compress(json.dumps(contents).encode(), mtime=0))
     return path
 
 
@@ -458,3 +469,147 @@ class TestPlayerPrefsOverTheWire:
             confirmed=True, dry_run=True,
         )
         assert result["risk"] is None
+
+
+class TestItems:
+    """The inventory over the wire: what is there, what could be, changes."""
+
+    PNG = b"\x89PNG\r\n\x1a\n" + b"pixels"
+
+    def a_game(self, tmp_path: Path) -> Path:
+        data = tmp_path / "game" / "www" / "data"
+        data.mkdir(parents=True)
+        (data / "Items.json").write_text(
+            json.dumps(
+                [
+                    None,
+                    {"id": 1, "name": "Potion", "iconIndex": 176},
+                    {"id": 2, "name": "Elixir", "iconIndex": 177},
+                ]
+            ),
+            encoding="utf-8",
+        )
+        icons = tmp_path / "game" / "www" / "img" / "system"
+        icons.mkdir(parents=True)
+        (icons / "IconSet.png").write_bytes(self.PNG)
+        return tmp_path / "game"
+
+    def opened(self, server: Server, save: Path, tmp_path: Path, *, named: bool = True) -> str:
+        params: dict[str, Any] = {"path": str(save)}
+        if named:
+            params["game_folder"] = str(self.a_game(tmp_path))
+        return str(result_of(server, "open", **params)["session"])
+
+    def test_what_is_in_the_bag_comes_over_with_names_and_icons(
+        self, server: Server, save: Path, tmp_path: Path
+    ) -> None:
+        session = self.opened(server, save, tmp_path)
+
+        result = result_of(server, "items.list", session=session)
+
+        bag = result["containers"][0]
+        assert bag["id"] == "bag"
+        assert bag["stacks"] == [
+            {
+                "item": "1",
+                "position": "1",
+                "count": 2,
+                "name": "Potion",
+                "kind": "items",
+                "description": None,
+                "icon": {"sheet": "rpgmaker-iconset", "index": 176},
+            }
+        ]
+        assert result["sheets"]["rpgmaker-iconset"]["url"].startswith("data:image/png;base64,")
+        assert result["sheets"]["rpgmaker-iconset"]["tile"] == 32
+
+    def test_a_game_nobody_has_named_says_so_rather_than_showing_nothing(
+        self, server: Server, save: Path, tmp_path: Path
+    ) -> None:
+        session = self.opened(server, save, tmp_path, named=False)
+
+        result = result_of(server, "items.list", session=session)
+
+        assert result["containers"][0]["named"] is False
+        assert result["containers"][0]["stacks"][0]["name"] == "1"
+
+    def test_the_pool_to_drag_from_is_everything_the_game_has(
+        self, server: Server, save: Path, tmp_path: Path
+    ) -> None:
+        session = self.opened(server, save, tmp_path)
+
+        result = result_of(server, "items.catalog", session=session, container="bag")
+
+        assert [entry["name"] for entry in result["items"]] == ["Potion", "Elixir"]
+        assert [entry["held"] for entry in result["items"]] == [True, False]
+
+    def test_the_pool_can_be_narrowed_by_what_was_typed(
+        self, server: Server, save: Path, tmp_path: Path
+    ) -> None:
+        session = self.opened(server, save, tmp_path)
+
+        result = result_of(server, "items.catalog", session=session, container="bag", find="eli")
+
+        assert [entry["name"] for entry in result["items"]] == ["Elixir"]
+
+    def test_dragging_something_in_stages_it(
+        self, server: Server, save: Path, tmp_path: Path
+    ) -> None:
+        session = self.opened(server, save, tmp_path)
+
+        result = result_of(
+            server, "items.give", session=session, container="bag", item="2", count=3
+        )
+
+        assert {stack["name"]: stack["count"] for stack in result["container"]["stacks"]} == {
+            "Potion": 2,
+            "Elixir": 3,
+        }
+        assert {"field": "bag/2", "before": 0, "after": 3} in result["pending"]
+        assert result["may_write"] is True
+
+    def test_a_count_can_be_set_and_a_stack_taken_out(
+        self, server: Server, save: Path, tmp_path: Path
+    ) -> None:
+        session = self.opened(server, save, tmp_path)
+
+        result_of(server, "items.set", session=session, container="bag", position="1", count=9)
+        result = result_of(server, "items.remove", session=session, container="bag", position="1")
+
+        assert result["container"]["stacks"] == []
+
+    def test_nothing_reaches_the_file_until_write(
+        self, server: Server, save: Path, tmp_path: Path
+    ) -> None:
+        session = self.opened(server, save, tmp_path)
+        before = save.read_bytes()
+
+        result_of(server, "items.give", session=session, container="bag", item="2")
+
+        assert save.read_bytes() == before
+
+        result_of(server, "write", session=session)
+
+        assert json.loads(gzip.decompress(save.read_bytes()))["items"] == {"1": 2, "2": 1}
+
+    def test_a_container_that_does_not_exist_is_a_readable_error(
+        self, server: Server, save: Path, tmp_path: Path
+    ) -> None:
+        session = self.opened(server, save, tmp_path)
+
+        response = call(server, "items.catalog", session=session, container="chest")
+
+        assert response["error"]["code"] == INVALID_PARAMS
+        assert "nothing called 'chest'" in response["error"]["message"]
+
+    def test_too_many_of_one_thing_is_refused_with_words(
+        self, server: Server, save: Path, tmp_path: Path
+    ) -> None:
+        session = self.opened(server, save, tmp_path)
+
+        response = call(
+            server, "items.set", session=session, container="bag", position="1", count=500
+        )
+
+        assert response["error"]["code"] == SAVESMITH_ERROR
+        assert "at most 99" in response["error"]["message"]

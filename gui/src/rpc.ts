@@ -225,6 +225,52 @@ export class Backend {
     });
   }
 
+  /** What the character is carrying, with names and pictures where they exist. */
+  items(session: string, container?: string): Promise<ItemsList> {
+    return this.#call("items.list", { session, container });
+  }
+
+  /**
+   * Everything the game has, which is the pool a thing is dragged out of.
+   *
+   * `find` is passed to the backend rather than filtered here: for a game with
+   * thousands of items the whole list is not worth sending, and the backend
+   * already knows how to narrow exactly, then loosely.
+   */
+  itemsCatalog(
+    session: string,
+    container: string,
+    options: { find?: string; limit?: number } = {},
+  ): Promise<ItemsCatalog> {
+    return this.#call("items.catalog", {
+      session,
+      container,
+      find: options.find,
+      limit: options.limit,
+    });
+  }
+
+  giveItem(session: string, container: string, item: string, count = 1): Promise<ItemsChange> {
+    return this.#call("items.give", { session, container, item, count });
+  }
+
+  setItemCount(
+    session: string,
+    container: string,
+    position: string | number,
+    count: number,
+  ): Promise<ItemsChange> {
+    return this.#call("items.set", { session, container, position, count });
+  }
+
+  removeItem(
+    session: string,
+    container: string,
+    position: string | number,
+  ): Promise<ItemsChange> {
+    return this.#call("items.remove", { session, container, position });
+  }
+
   backups(plugin: string): Promise<{ backups: BackupEntry[] }> {
     return this.#call("backups.list", { plugin });
   }
@@ -425,6 +471,77 @@ export interface PokeResult {
   backup?: string;
   risk: { tier: string; signals: Signal[] } | null;
 }
+
+/** Where an icon sits in a sheet. The sheet itself arrives once, whole. */
+export interface IconRef {
+  sheet: string;
+  index: number;
+}
+
+/**
+ * A grid of icons as the game ships it, as a data URL.
+ *
+ * Whole rather than cut up: showing one tile of a sprite sheet is two CSS
+ * properties, and slicing a thousand PNGs in Python to save the browser that
+ * arithmetic would be work for nothing.
+ */
+export interface Sheet {
+  url: string;
+  /** Pixels per icon in the original image. */
+  tile: number;
+  columns: number;
+}
+
+export interface Stack {
+  item: string;
+  /** Where it sits in the container: an index for a list, a key for a map. */
+  position: string | number;
+  count: number;
+  /** The readable name, or the id again when nobody has written one down. */
+  name: string;
+  kind: string | null;
+  description: string | null;
+  icon: IconRef | null;
+}
+
+export interface CatalogItem {
+  item: string;
+  name: string;
+  kind: string | null;
+  description: string | null;
+  icon: IconRef | null;
+  /** Already in the save, so dragging it in adds to the stack. */
+  held: boolean;
+}
+
+export interface ContainerView {
+  id: string;
+  label: string;
+  capacity: number | null;
+  max_count: number;
+  /** False when nothing names this game's items, so ids are all there is. */
+  named: boolean;
+  /** Where the names came from, in words. */
+  source: string;
+  stacks: Stack[];
+}
+
+export interface ItemsList {
+  containers: ContainerView[];
+  sheets: Record<string, Sheet>;
+}
+
+export interface ItemsCatalog {
+  container: string;
+  named: boolean;
+  source: string;
+  total: number;
+  sheets: Record<string, Sheet>;
+  items: CatalogItem[];
+}
+
+/** Any change to a container: the container as it now is, and the session. */
+export type ItemsChange = Session & { container: ContainerView };
 
 export interface BackupEntry {
   index: number;

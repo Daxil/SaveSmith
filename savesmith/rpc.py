@@ -27,6 +27,7 @@ adds none and relaxes none.
 
 from __future__ import annotations
 
+import base64
 import json
 import sys
 import traceback
@@ -36,14 +37,15 @@ from pathlib import Path
 from typing import IO, Any
 
 from savesmith.agent.discovery import discover as run_discovery
+from savesmith.core import catalog, detect, diagnostics, direct, library, playerprefs
 from savesmith.core import checksum as checksum_module
-from savesmith.core import detect, diagnostics, direct, library, playerprefs
 from savesmith.core.backup import BackupStore
 from savesmith.core.console import use_utf8
 from savesmith.core.discover import examine, look_at
 from savesmith.core.errors import SaveSmithError
+from savesmith.core.inventory import Stack
 from savesmith.core.paths import RealSystem, SystemFacade
-from savesmith.core.plugin import Plugin
+from savesmith.core.plugin import ContainerSpec, Plugin
 from savesmith.core.repository import PluginRepository, bundled
 from savesmith.core.risk import Acknowledgement, RiskDatabase, assess
 from savesmith.core.session import EditSession
@@ -76,6 +78,9 @@ class Server:
 
     system: SystemFacade = field(default_factory=RealSystem)
     sessions: dict[str, EditSession] = field(default_factory=dict)
+    games: dict[str, Path] = field(default_factory=dict)
+    """Where each session's game is installed, when that is known."""
+    _catalogs: dict[tuple[str, str], catalog.Catalog] = field(default_factory=dict)
     _counter: int = 0
 
     # -- transport -------------------------------------------------------
@@ -166,6 +171,11 @@ class Server:
             "prefs.set": self._prefs_set,
             "open": self._open,
             "set": self._set,
+            "items.list": self._items_list,
+            "items.catalog": self._items_catalog,
+            "items.give": self._items_give,
+            "items.set": self._items_set,
+            "items.remove": self._items_remove,
             "acknowledge": self._acknowledge,
             "confirm_cloud": self._confirm_cloud,
             "write": self._write,
@@ -534,8 +544,10 @@ class Server:
 
         anticheat: tuple[str, ...] = ()
         scanned = False
+        folder: Path | None = None
         if params.get("game_folder"):
-            game = look_at(Path(params["game_folder"]), self.system).game
+            folder = Path(params["game_folder"])
+            game = look_at(folder, self.system).game
             anticheat, scanned = game.anticheat, True
 
         session = EditSession.open(
@@ -548,6 +560,8 @@ class Server:
         self._counter += 1
         key = f"s{self._counter}"
         self.sessions[key] = session
+        if folder is not None:
+            self.games[key] = folder
         return self._state(key, session, params.get("language", "en"))
 
     def _set(self, params: dict[str, Any], _notify: Notify) -> dict[str, Any]:
@@ -557,6 +571,136 @@ class Server:
             "change": {"field": change.address, "before": change.before, "after": change.after},
             **self._state(_require(params, "session"), session, params.get("language", "en")),
         }
+
+    # -- items -----------------------------------------------------------
+
+    def _items_list(self, params: dict[str, Any], _notify: Notify) -> dict[str, Any]:
+        """What is in the save's containers, named and pictured where possible."""
+        key = _require(params, "session")
+        session = self._session(params)
+        language = params.get("language", "en")
+        wanted = params.get("container")
+
+        containers = []
+        sheets: dict[str, Any] = {}
+        for spec in session.plugin.containers:
+            if wanted not in (None, spec.id):
+                continue
+            known = self._catalog_for(key, session, spec)
+            sheets.update(_sheets_json(known))
+            containers.append(
+                {
+                    "id": spec.id,
+                    "label": spec.label.get(language),
+                    "capacity": spec.capacity,
+                    "max_count": spec.max_count,
+                    "named": bool(known),
+                    "source": known.source,
+                    "stacks": [_stack_json(stack, known) for stack in session.stacks(spec.id)],
+                }
+            )
+        return {"containers": containers, "sheets": sheets}
+
+    def _items_catalog(self, params: dict[str, Any], _notify: Notify) -> dict[str, Any]:
+        """Everything this game *has*, which is what a pool to drag from means.
+
+        Empty is a real answer: for a game whose data sits inside packed,
+        encrypted archives, nobody has written down what its items are called
+        until somebody installs a pack. The window says that rather than
+        showing an empty box with no explanation.
+        """
+        key = _require(params, "session")
+        session = self._session(params)
+        spec = self._container(session, _require(params, "container"))
+        known = self._catalog_for(key, session, spec)
+
+        find = str(params.get("find") or "").strip()
+        entries = known.search(find) if find else list(known.entries.values())
+        limit = int(params.get("limit") or 200)
+        held = {stack.item for stack in session.stacks(spec.id)}
+
+        return {
+            "container": spec.id,
+            "named": bool(known),
+            "source": known.source,
+            "total": len(entries),
+            "sheets": _sheets_json(known),
+            "items": [
+                {**_entry_json(entry), "held": entry.id in held} for entry in entries[:limit]
+            ],
+        }
+
+    def _items_give(self, params: dict[str, Any], _notify: Notify) -> dict[str, Any]:
+        session = self._session(params)
+        container = _require(params, "container")
+        session.give_item(container, _require(params, "item"), int(params.get("count") or 1))
+        return self._after_items(params, session, container)
+
+    def _items_set(self, params: dict[str, Any], _notify: Notify) -> dict[str, Any]:
+        session = self._session(params)
+        container = _require(params, "container")
+        session.set_stack_count(
+            container, _position(params), int(_require_number(params, "count"))
+        )
+        return self._after_items(params, session, container)
+
+    def _items_remove(self, params: dict[str, Any], _notify: Notify) -> dict[str, Any]:
+        session = self._session(params)
+        container = _require(params, "container")
+        session.remove_stack(container, _position(params))
+        return self._after_items(params, session, container)
+
+    def _after_items(
+        self, params: dict[str, Any], session: EditSession, container: str
+    ) -> dict[str, Any]:
+        """The changed container and the whole session state, in one answer.
+
+        A window that redraws from what it was just handed cannot drift out of
+        step with the core, which is the same reason every other method here
+        returns the state too.
+        """
+        key = _require(params, "session")
+        language = params.get("language", "en")
+        spec = self._container(session, container)
+        known = self._catalog_for(key, session, spec)
+        return {
+            "container": {
+                "id": spec.id,
+                "label": spec.label.get(language),
+                "capacity": spec.capacity,
+                "max_count": spec.max_count,
+                "named": bool(known),
+                "source": known.source,
+                "stacks": [_stack_json(stack, known) for stack in session.stacks(spec.id)],
+            },
+            **self._state(key, session, language),
+        }
+
+    def _container(self, session: EditSession, name: str) -> ContainerSpec:
+        spec = session.plugin.container(name)
+        if spec is None:
+            known = ", ".join(other.id for other in session.plugin.containers)
+            raise RpcError(
+                INVALID_PARAMS,
+                f"This save has nothing called '{name}' to put things in.",
+                {"containers": known},
+            )
+        return spec
+
+    def _catalog_for(
+        self, key: str, session: EditSession, spec: ContainerSpec
+    ) -> catalog.Catalog:
+        """Loaded once per session: it reads files and may carry an image."""
+        cached = self._catalogs.get((key, spec.id))
+        if cached is None:
+            source = session.plugin.source
+            cached = catalog.load(
+                spec.catalog,
+                plugin_folder=source.parent if source else None,
+                game_folder=self.games.get(key),
+            )
+            self._catalogs[(key, spec.id)] = cached
+        return cached
 
     def _acknowledge(self, params: dict[str, Any], _notify: Notify) -> dict[str, Any]:
         session = self._session(params)
@@ -734,6 +878,59 @@ class Server:
             "blockers": list(session.blockers),
             "may_write": session.may_write,
         }
+
+
+def _stack_json(stack: Stack, known: catalog.Catalog) -> dict[str, Any]:
+    entry = known.get(stack.item)
+    return {
+        "item": stack.item,
+        "position": stack.position,
+        "count": stack.count,
+        "name": entry.name if entry else stack.item,
+        "kind": entry.kind if entry else None,
+        "description": entry.description if entry else None,
+        "icon": _icon_json(entry.icon if entry else None),
+    }
+
+
+def _entry_json(entry: catalog.Entry) -> dict[str, Any]:
+    return {
+        "item": entry.id,
+        "name": entry.name,
+        "kind": entry.kind,
+        "description": entry.description,
+        "icon": _icon_json(entry.icon),
+    }
+
+
+def _icon_json(icon: catalog.Icon | None) -> dict[str, Any] | None:
+    return None if icon is None else {"sheet": icon.sheet, "index": icon.index}
+
+
+def _sheets_json(known: catalog.Catalog) -> dict[str, Any]:
+    """Icon sheets as data URLs, whole.
+
+    Whole because cutting a sprite sheet into a thousand images would mean
+    decoding and re-encoding PNGs here for something the browser does with two
+    CSS properties. The sheet is handed over once and every icon is a position
+    in it.
+    """
+    return {
+        sheet.id: {
+            "url": "data:image/png;base64," + base64.b64encode(sheet.png).decode("ascii"),
+            "tile": sheet.tile,
+            "columns": sheet.columns,
+        }
+        for sheet in known.sheets.values()
+    }
+
+
+def _position(params: Mapping[str, Any]) -> str | int:
+    """A place in a container: a number for a list, a key for a map."""
+    value = _require_any(params, "position")
+    if isinstance(value, bool) or not isinstance(value, int | str):
+        raise RpcError(INVALID_PARAMS, "'position' is a number or a key.")
+    return value
 
 
 type Notify = Callable[[str, dict[str, Any]], None]

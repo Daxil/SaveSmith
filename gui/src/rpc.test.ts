@@ -124,6 +124,48 @@ describe("Backend", () => {
     await new Backend(new BridgeTransport()).write("s1");
     expect(sentBody(fetching).params.session).toBe("s1");
   });
+
+  it("asks the backend to narrow the pool rather than filtering here", async () => {
+    // A game with thousands of items should not send all of them so that the
+    // window can throw most away.
+    const fetching = answering({ result: { items: [] } });
+
+    await new Backend(new BridgeTransport()).itemsCatalog("s1", "bag", {
+      find: "зель",
+      limit: 120,
+    });
+
+    expect(sentBody(fetching).method).toBe("items.catalog");
+    expect(sentBody(fetching).params).toMatchObject({
+      session: "s1",
+      container: "bag",
+      find: "зель",
+      limit: 120,
+    });
+  });
+
+  it("sends a dropped item as a give, with how many", async () => {
+    const fetching = answering({ result: {} });
+
+    await new Backend(new BridgeTransport()).giveItem("s1", "bag", "goods:1007", 3);
+
+    expect(sentBody(fetching).method).toBe("items.give");
+    expect(sentBody(fetching).params).toMatchObject({
+      session: "s1",
+      container: "bag",
+      item: "goods:1007",
+      count: 3,
+    });
+  });
+
+  it("changes a count by the place it sits in, not by its name", async () => {
+    // A container may hold the same thing twice, each with its own state.
+    const fetching = answering({ result: {} });
+
+    await new Backend(new BridgeTransport()).setItemCount("s1", "held", 12, 99);
+
+    expect(sentBody(fetching).params).toMatchObject({ position: 12, count: 99 });
+  });
 });
 
 describe("RpcError", () => {
