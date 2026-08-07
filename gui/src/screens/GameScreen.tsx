@@ -24,10 +24,13 @@ const ASIDE_WORDS: Record<string, [string, string]> = {
 export function GameScreen({
   found,
   onOpen,
+  onAnalyse,
   onBack,
 }: {
   found: FoundGame;
   onOpen: (save: FoundSave) => void;
+  /** Have an assistant work this format out, so the save gets real fields. */
+  onAnalyse: (save: FoundSave) => void;
   onBack: () => void;
 }) {
   const { game, saves, prefs, bottle } = found;
@@ -80,8 +83,17 @@ export function GameScreen({
           </h2>
           <p className="hint">
             Для этой игры никто не описал, что означают байты внутри, поэтому полей
-            по именам здесь нет. Зато есть другой путь: говоришь, какое число видишь
-            в игре, и SaveSmith находит его в файле.
+            по именам здесь нет. Но это поправимо — и делать это руками не обязательно.
+          </p>
+          {/* The offer goes above the manual route on purpose: for most people
+              it is the better one, and burying it under an explanation of
+              addresses would be hiding the answer behind the workaround. */}
+          <button className="write analyse-offer" onClick={() => onAnalyse(byAddress[0]!)}>
+            Разобрать эту игру автоматически
+          </button>
+          <p className="hint">
+            Или вручную: говоришь, какое число видишь в игре, и SaveSmith находит его
+            в файле.
           </p>
           <ul className="saves">
             {byAddress.map((save) => (

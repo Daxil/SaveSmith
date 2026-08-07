@@ -225,6 +225,41 @@ export class Backend {
     });
   }
 
+  /** Which assistants are installed here, for the window to offer. */
+  assistants(): Promise<{ assistants: Assistant[] }> {
+    return this.#call("assistants", {});
+  }
+
+  /**
+   * Have an assistant work out a save's format, from a button press.
+   *
+   * Takes minutes and reports as it goes, so `onProgress` is not decoration:
+   * a window that sits still for four minutes has, as far as anybody watching
+   * can tell, crashed.
+   *
+   * `consented` is a wall in the backend, not a formality. Running this shows
+   * parts of the save to somebody else's service, and the screen has to have
+   * said so and been agreed with before it may pass true.
+   */
+  analyse(
+    path: string,
+    options: {
+      assistant: string;
+      consented: boolean;
+      gameFolder?: string;
+      numbers?: Record<string, number>;
+      onProgress?: (line: ProgressLine) => void;
+    },
+  ): Promise<AnalysisResult> {
+    return this.#call("analyse", {
+      path,
+      assistant: options.assistant,
+      consented: options.consented,
+      game_folder: options.gameFolder,
+      numbers: options.numbers ?? {},
+    });
+  }
+
   /** What the character is carrying, with names and pictures where they exist. */
   items(session: string, container?: string): Promise<ItemsList> {
     return this.#call("items.list", { session, container });
@@ -470,6 +505,26 @@ export interface PokeResult {
   after: unknown;
   backup?: string;
   risk: { tier: string; signals: Signal[] } | null;
+}
+
+export interface Assistant {
+  id: string;
+  name: string;
+  path: string;
+}
+
+export interface ProgressLine {
+  text: string;
+  /** step, trying, found, failed or done — enough to style, not to branch on. */
+  kind: string;
+}
+
+export interface AnalysisResult {
+  installed: boolean;
+  plugin: string | null;
+  /** What the assistant concluded, in Russian, for the person to read. */
+  summary: string;
+  log: ProgressLine[];
 }
 
 /** Where an icon sits in a sheet. The sheet itself arrives once, whole. */

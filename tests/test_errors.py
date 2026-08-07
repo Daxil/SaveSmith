@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 
+from savesmith.agent.assistant import AssistantError
 from savesmith.agent.sandbox import SandboxError
 from savesmith.core.catalog import CatalogError
 from savesmith.core.contribute import ContributionError
@@ -73,6 +74,12 @@ SAMPLES: list[SaveSmithError] = [
         "The item list beside this plugin could not be read, so items will show "
         "as bare numbers.",
         detail="items.json: line 1",
+    ),
+    AssistantError(
+        "SaveSmith did not start the assistant, because nobody has agreed to it yet. "
+        "Working the format out means showing parts of this save file to the assistant, "
+        "which is somebody else's service.",
+        detail="claude",
     ),
     ContributionError(
         "Nothing to check the plugin against. Point at a save file or at the game, so "

@@ -22,6 +22,7 @@ import {
 } from "./rpc";
 import { Updates } from "./Updates";
 import { GameScreen } from "./screens/GameScreen";
+import { Analyse } from "./screens/Analyse";
 import { NumberScreen } from "./screens/NumberScreen";
 import { PickGame } from "./screens/PickGame";
 import { SaveScreen } from "./screens/SaveScreen";
@@ -37,6 +38,8 @@ export function App() {
   const [session, setSession] = useState<Session | null>(null);
   // A save no plugin describes: edited by number rather than by field.
   const [byNumber, setByNumber] = useState<FoundSave | null>(null);
+  // A save whose format nobody has described, about to be worked out for us.
+  const [analysing, setAnalysing] = useState<FoundSave | null>(null);
   const [failure, setFailure] = useState<Failure>(null);
   const [busy, setBusy] = useState(false);
 
@@ -63,6 +66,7 @@ export function App() {
     guard(async () => {
       setSession(null);
       setByNumber(null);
+      setAnalysing(null);
       setFolder(picked);
       setFound(await backend.findSaves(picked));
     });
@@ -103,7 +107,25 @@ export function App() {
       )}
 
       <main>
-        {byNumber ? (
+        {analysing ? (
+          <Analyse
+            backend={backend}
+            save={analysing.path}
+            gameFolder={folder ?? undefined}
+            onBack={() => setAnalysing(null)}
+            onDone={() =>
+              guard(async () => {
+                // The plugin exists now, so the same file opens by field name
+                // rather than by address. Re-asking the backend is what makes
+                // that visible without restarting anything.
+                const save = analysing;
+                setAnalysing(null);
+                if (folder) setFound(await backend.findSaves(folder));
+                if (save) setSession(await backend.open(save.path, folder ?? undefined));
+              })
+            }
+          />
+        ) : byNumber ? (
           <NumberScreen
             backend={backend}
             save={byNumber}
@@ -124,7 +146,12 @@ export function App() {
             onFailure={(message) => setFailure({ message })}
           />
         ) : found ? (
-          <GameScreen found={found} onOpen={openSave} onBack={() => setFound(null)} />
+          <GameScreen
+            found={found}
+            onOpen={openSave}
+            onAnalyse={setAnalysing}
+            onBack={() => setFound(null)}
+          />
         ) : (
           <PickGame
             backend={backend}

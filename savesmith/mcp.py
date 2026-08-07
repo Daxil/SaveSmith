@@ -468,6 +468,13 @@ class Server:
                 "real data is a guess, and guesses corrupt saves."
             )
 
+        # The prompt asks for these, and asking is not enforcing. A model that
+        # claims 'verified' is claiming somebody started the game and watched
+        # the edited save load, which nothing here can have done; a model that
+        # claims 'safe' is telling a person there is no risk. Both are lowered
+        # rather than argued about.
+        manifest = _no_claims_it_cannot_make(manifest)
+
         try:
             plugin = Plugin.from_mapping(manifest)
         except SaveSmithError as exc:
@@ -588,6 +595,24 @@ class Server:
                 "are in the log.",
                 failed=True,
             )
+
+
+def _no_claims_it_cannot_make(manifest: Mapping[str, Any]) -> dict[str, Any]:
+    """Lower two claims in a proposed manifest that only a person can earn.
+
+    ``verified`` means somebody launched the game and watched the edited save
+    load. ``safe`` means somebody is confident nothing bad follows from editing
+    it. Neither is a thing that can be established by reading a file, so
+    neither survives arriving from a tool call, however sincerely it was meant.
+    """
+    checked = dict(manifest)
+    checked["confidence"] = "experimental"
+
+    risk = dict(checked.get("risk") or {})
+    if str(risk.get("tier", "")) == "safe" or "tier" not in risk:
+        risk["tier"] = "caution"
+    checked["risk"] = risk
+    return checked
 
 
 def _describe(value: Any) -> str:

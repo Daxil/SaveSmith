@@ -164,6 +164,8 @@ class Server:
             "identify": self._identify,
             "checksums": self._checksums,
             "discover": self._discover,
+            "assistants": self._assistants,
+            "analyse": self._analyse,
             "fields": self._fields,
             "search": self._search,
             "poke": self._poke,
@@ -536,6 +538,49 @@ class Server:
                 if params.get("draft")
                 else None
             ),
+        }
+
+    def _assistants(self, _params: dict[str, Any], _notify: Notify) -> dict[str, Any]:
+        """Which assistants this machine has, for the window to offer."""
+        from savesmith.agent import assistant
+
+        return {"assistants": [one.described() for one in assistant.installed()]}
+
+    def _analyse(self, params: dict[str, Any], notify: Notify) -> dict[str, Any]:
+        """Have an assistant work out a save's format, start to finish.
+
+        The window shows a button and a progress bar; everything between them
+        happens here. Progress is streamed rather than summarised at the end
+        because this takes minutes, and a person watching a frozen window
+        concludes the program has hung.
+        """
+        from savesmith.agent import assistant
+
+        save = Path(_require(params, "path"))
+        numbers = {
+            str(name): int(value)
+            for name, value in (params.get("numbers") or {}).items()
+            if isinstance(value, int) and not isinstance(value, bool)
+        }
+        chosen = assistant.named(str(params.get("assistant") or "claude"))
+
+        outcome = assistant.analyse(
+            chosen,
+            save,
+            game=Path(params["game_folder"]) if params.get("game_folder") else None,
+            numbers=numbers,
+            # Never defaulted to true: this sends parts of a save file outward,
+            # and the window has to have asked.
+            consented=bool(params.get("consented")),
+            on_progress=lambda event: notify(
+                "progress", {"text": event.text, "kind": event.kind}
+            ),
+        )
+        return {
+            "installed": outcome.succeeded,
+            "plugin": outcome.plugin_id,
+            "summary": assistant.summarise(outcome),
+            "log": [{"text": event.text, "kind": event.kind} for event in outcome.events],
         }
 
     def _open(self, params: dict[str, Any], _notify: Notify) -> dict[str, Any]:

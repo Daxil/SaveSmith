@@ -251,3 +251,28 @@ details summary { color: var(--muted); cursor: pointer; margin-top: 20px; }
   border: 1px solid var(--accent); border-radius: 8px; background: #1e2431;
 }
 .update button { margin-left: auto; }
+
+/* Working a format out: a form, then a long wait made legible. */
+.analyse { display: flex; flex-direction: column; align-items: flex-start; }
+.analyse h2 { font-size: 15px; margin: 24px 0 6px; }
+.analyse > p { max-width: 620px; }
+.analyse-offer { margin: 4px 0 14px; }
+
+.numbers { list-style: none; padding: 0; margin: 0 0 8px; display: grid; gap: 8px; }
+.numbers li { display: flex; align-items: center; gap: 12px; }
+.numbers label { width: 170px; color: var(--muted); font-size: 14px; }
+.numbers input { width: 140px; font-variant-numeric: tabular-nums; }
+
+/* Every step the assistant takes, as it happens. The point is not the detail —
+   it is that somebody waiting four minutes can see it is still working. */
+.steps {
+  list-style: none; padding: 12px 14px; margin: 18px 0 0; width: 100%;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+  max-height: 320px; overflow-y: auto; font-size: 14px;
+}
+.steps li { padding: 3px 0; color: var(--muted); }
+.steps li.trying { color: var(--text); }
+.steps li.trying::before { content: "→ "; color: var(--accent); }
+.steps li.failed { color: var(--bad); }
+.steps li.done { color: var(--good); }
+.analyse .failure { margin-top: 14px; }
