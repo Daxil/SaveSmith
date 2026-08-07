@@ -21,6 +21,11 @@ So: recognise the engine, work out where it would have put things, look there,
 and run whatever is found through the decoder ladder. The same pass notices
 anti-cheat components, because the install folder is exactly where they live
 and the risk tier depends on it.
+
+For Unity games the search does not stop at files. Plenty of them keep real
+progress in PlayerPrefs — the registry on Windows, a property list on macOS —
+and a scan that only walks the filesystem reports "no saves found" for a game
+whose coins are sitting in plain sight somewhere else.
 """
 
 from __future__ import annotations
@@ -32,7 +37,9 @@ from pathlib import Path
 
 from savesmith.core import detect
 from savesmith.core.detect import Report
+from savesmith.core.errors import SaveSmithError
 from savesmith.core.paths import PathResolver, SystemFacade, locate
+from savesmith.core.playerprefs import Entry, open_prefs
 
 # Files that are never a save, however promising the folder.
 _IGNORED_SUFFIXES = frozenset(
@@ -120,26 +127,59 @@ class FoundSave:
         return self.report.look.size
 
 
+@dataclass(frozen=True)
+class FoundPrefs:
+    """A Unity game's PlayerPrefs, wherever this platform keeps them."""
+
+    location: str
+    entries: tuple[Entry, ...]
+
+    @property
+    def numbers(self) -> tuple[Entry, ...]:
+        """The ones worth showing first — currency and counters look like this."""
+        return tuple(
+            entry
+            for entry in self.entries
+            if isinstance(entry.value, int | float) and not isinstance(entry.value, bool)
+        )
+
+
 @dataclass
 class Discovery:
     game: GameFolder
     searched: list[Path] = field(default_factory=list)
     saves: list[FoundSave] = field(default_factory=list)
+    prefs: FoundPrefs | None = None
 
     @property
     def recognised(self) -> list[FoundSave]:
         return [save for save in self.saves if save.recognised]
 
+    @property
+    def found_anything(self) -> bool:
+        return bool(self.saves) or bool(self.prefs and self.prefs.entries)
+
     def explain(self) -> list[str]:
         lines = [self.game.summary(), ""]
         lines += [f"Looked in: {path}" for path in self.searched]
-        if not self.saves:
+        if self.prefs is not None:
+            lines.append(f"Looked in: {self.prefs.location} (Unity settings)")
+        if not self.found_anything:
             lines.append("No save files found in any of those places.")
             return lines
-        lines.append("")
-        for save in self.saves[:20]:
-            mark = "✓" if save.recognised else "?"
-            lines.append(f"  {mark} {save.path.name} — {save.format} ({save.size} bytes)")
+        if self.saves:
+            lines.append("")
+            for save in self.saves[:20]:
+                mark = "✓" if save.recognised else "?"
+                lines.append(f"  {mark} {save.path.name} — {save.format} ({save.size} bytes)")
+        if self.prefs is not None and self.prefs.entries:
+            lines += ["", f"Unity settings ({len(self.prefs.entries)} of them):"]
+            shown = self.prefs.numbers or self.prefs.entries
+            for entry in shown[:20]:
+                lines.append(f"  ✓ {entry.name} = {entry.value} ({entry.kind})")
+            if len(shown) > 20:
+                lines.append(f"  … and {len(shown) - 20} more")
+            lines.append("  Change one with: savesmith prefs --game-folder <folder> --set NAME VAL")
         return lines
 
 
@@ -346,7 +386,32 @@ def find_saves(
 
     # Recognised first, then by name so repeated runs read the same.
     result.saves.sort(key=lambda save: (not save.recognised, str(save.path)))
+    result.prefs = find_prefs(game, system)
     return result
+
+
+def find_prefs(game: GameFolder, system: SystemFacade) -> FoundPrefs | None:
+    """A Unity game's PlayerPrefs, or ``None`` if there are none to read.
+
+    Never raises. A missing property list, a registry key that is not there, a
+    platform with no such concept — all of them mean "nothing here", and none
+    of them is a reason for a folder scan to fail.
+    """
+    if game.engine is not Engine.UNITY or not game.company or not game.project:
+        return None
+    try:
+        store = open_prefs(system, game.company, game.project)
+        entries = store.read()
+    except SaveSmithError:
+        return None
+    except OSError:
+        return None
+    if not entries:
+        return None
+    return FoundPrefs(
+        location=store.location,
+        entries=tuple(entries[name] for name in sorted(entries)),
+    )
 
 
 def main(argv: list[str] | None = None) -> int:

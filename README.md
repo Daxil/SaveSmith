@@ -34,6 +34,7 @@ SaveSmith трогает **только файлы сохранений**. Он 
 uv run savesmith doctor                      что видно на этой машине
 uv run savesmith scan                        установленные игры и их тир риска
 uv run savesmith find "<папка игры>"         найти сейвы, зная только папку
+uv run savesmith prefs --game-folder <папка> настройки Unity (PlayerPrefs)
 uv run savesmith identify <файл>             определить формат
 uv run savesmith checksum <файл>             найти контрольную сумму
 uv run savesmith discover <файл>             полный разбор незнакомого формата
@@ -49,6 +50,12 @@ uv run savesmith verify <плагин> <корпус>    round-trip гейт
 из `SHGetKnownFolderPath`, поэтому перенаправление OneDrive не ломает поиск.
 Разбор библиотеки Steam. Бутылки Whisky, CrossOver, Wine и `.app`-обёртки
 Wineskin. По папке игры определяется движок и выводятся места хранения сейвов.
+
+**Unity PlayerPrefs.** Многие игры на Unity держат прогресс не в файле, а в
+реестре Windows или в plist на macOS. `find` показывает их рядом с сейвами,
+`prefs --set` правит с бэкапом. Имена ключей восстанавливаются перечислением
+того, что реально лежит в хранилище, а не переизобретением недокументированного
+хеша Unity.
 
 **Чтение и правка.** Формат описывается списком обратимых шагов: чтение гонит
 его вперёд, запись назад. Операции: gzip, zlib, base64, xor, обрезка заголовка,

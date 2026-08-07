@@ -4,13 +4,15 @@ from __future__ import annotations
 
 import gzip
 import json
+import plistlib
 from pathlib import Path
 
 import pytest
 
 from savesmith.core.discover import Engine, examine, find_saves, save_locations
-from savesmith.core.paths import FakeSystem, KnownFolder
+from savesmith.core.paths import FakeSystem, KnownFolder, RegistryHive
 from savesmith.core.platform_ import Platform
+from savesmith.core.playerprefs import REG_DWORD
 
 SAVE_BYTES = gzip.compress(json.dumps({"gold": 100}).encode(), mtime=0)
 
@@ -268,3 +270,81 @@ class TestFindingSaves:
         with big.open("wb") as handle:
             handle.truncate(70 * 1024 * 1024)
         assert find_saves(examine(game), windows).saves == []
+
+
+class TestUnityPlayerPrefs:
+    """A Unity game keeping progress in PlayerPrefs is not a game with no saves."""
+
+    def _unity_game(self, tmp_path: Path) -> Path:
+        game = tmp_path / "Coin Quest"
+        (game / "CoinQuest_Data").mkdir(parents=True)
+        (game / "CoinQuest_Data" / "app.info").write_text(
+            "Tiny Studio\nCoin Quest\n", encoding="utf-8"
+        )
+        return game
+
+    def test_registry_prefs_are_reported_beside_the_files(
+        self, tmp_path: Path, windows: FakeSystem
+    ) -> None:
+        game = self._unity_game(tmp_path)
+        key = "Software\\Tiny Studio\\Coin Quest"
+        windows.registry[(RegistryHive.HKCU, key, "coins_h1234567890")] = 250
+        windows.registry_types[(RegistryHive.HKCU, key, "coins_h1234567890")] = REG_DWORD
+
+        found = find_saves(examine(game), windows)
+
+        assert found.saves == [], "this game keeps nothing in a file"
+        assert found.found_anything, "but it does have progress worth showing"
+        assert found.prefs is not None
+        assert [entry.name for entry in found.prefs.entries] == ["coins"]
+        assert found.prefs.numbers[0].value == 250
+
+    def test_the_report_says_where_they_are_and_how_to_change_one(
+        self, tmp_path: Path, windows: FakeSystem
+    ) -> None:
+        game = self._unity_game(tmp_path)
+        key = "Software\\Tiny Studio\\Coin Quest"
+        windows.registry[(RegistryHive.HKCU, key, "coins_h1")] = 250
+        windows.registry_types[(RegistryHive.HKCU, key, "coins_h1")] = REG_DWORD
+
+        lines = " ".join(find_saves(examine(game), windows).explain())
+        assert "Unity settings" in lines
+        assert "coins = 250" in lines
+        assert "savesmith prefs" in lines
+
+    def test_a_mac_reads_them_from_the_property_list(self, tmp_path: Path) -> None:
+        home = tmp_path / "home"
+        (home / "Library" / "Preferences").mkdir(parents=True)
+        plist = home / "Library" / "Preferences" / "unity.Tiny Studio.Coin Quest.plist"
+        with plist.open("wb") as handle:
+            plistlib.dump({"coins": 250, "muted": True}, handle, fmt=plistlib.FMT_BINARY)
+        system = FakeSystem(platform=Platform.MACOS, home_dir=home)
+
+        found = find_saves(examine(self._unity_game(tmp_path)), system)
+
+        assert found.prefs is not None
+        assert {entry.name for entry in found.prefs.entries} == {"coins", "muted"}
+        # A flag is not a number a player wants to edit first.
+        assert [entry.name for entry in found.prefs.numbers] == ["coins"]
+
+    def test_nothing_stored_means_nothing_reported(
+        self, tmp_path: Path, windows: FakeSystem
+    ) -> None:
+        assert find_saves(examine(self._unity_game(tmp_path)), windows).prefs is None
+
+    def test_a_non_unity_game_is_not_asked(self, tmp_path: Path, windows: FakeSystem) -> None:
+        game = tmp_path / "Mystery"
+        game.mkdir()
+        assert find_saves(examine(game), windows).prefs is None
+
+    def test_an_unreadable_property_list_is_not_fatal(self, tmp_path: Path) -> None:
+        """A damaged settings file must not take the whole folder scan down."""
+        home = tmp_path / "home"
+        (home / "Library" / "Preferences").mkdir(parents=True)
+        plist = home / "Library" / "Preferences" / "unity.Tiny Studio.Coin Quest.plist"
+        plist.write_bytes(b"not a property list")
+        system = FakeSystem(platform=Platform.MACOS, home_dir=home)
+
+        found = find_saves(examine(self._unity_game(tmp_path)), system)
+        assert found.prefs is None
+        assert "No save files found" in " ".join(found.explain())
