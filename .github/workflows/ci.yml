@@ -3,6 +3,10 @@ name: CI
 on:
   push:
     branches: [main]
+    # A release is a tag, and the tag runs the same build the branch does.
+    # Building release files by a separate path would mean shipping something
+    # no test ever ran against.
+    tags: ["v*"]
   pull_request:
   workflow_dispatch:
 
@@ -106,6 +110,11 @@ jobs:
             label: Windows
           - os: macos-15
             label: macOS arm64
+          # An Intel Mac got the command line and no window at all, which is a
+          # strange thing to tell somebody: the same program, and the half with
+          # the buttons is missing.
+          - os: macos-15-intel
+            label: macOS x86_64
     steps:
       - uses: actions/checkout@v4
 
@@ -169,3 +178,92 @@ jobs:
             gui/src-tauri/target/release/bundle/dmg/*.dmg
             gui/src-tauri/target/release/bundle/nsis/*.exe
           if-no-files-found: error
+
+  # A tag becomes a page with files on it and a permanent link. Without this a
+  # download means "open Actions, find a green run, scroll to the bottom, sign
+  # in" — four steps and an account, to fetch a save editor.
+  release:
+    name: Release
+    needs: [test, app]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      # The tag says one version and the files carry another only once before
+      # somebody downloads "0.2.0" and gets 0.1.0. Four files hold the number;
+      # all four are checked against the tag rather than trusted.
+      - name: The tag and the code agree on the version
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          fail=0
+          check() {
+            if ! grep -qF "$2" "$1"; then
+              echo "::error file=$1::says something other than $VERSION"
+              fail=1
+            fi
+          }
+          check pyproject.toml "version = \"$VERSION\""
+          check gui/package.json "\"version\": \"$VERSION\""
+          check gui/src-tauri/Cargo.toml "version = \"$VERSION\""
+          check gui/src-tauri/tauri.conf.json "\"version\": \"$VERSION\""
+          exit $fail
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      # Downloaded, every file is called savesmith or SaveSmith_0.1.0.dmg and
+      # they land in folders named after runner images. On a release page they
+      # have to say what they are without their folder.
+      - name: Name the files after what they are
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          mkdir -p release
+          cp artifacts/savesmith-windows-latest/savesmith.exe \
+             "release/savesmith-$VERSION-windows-x64.exe"
+          cp artifacts/savesmith-macos-15/savesmith \
+             "release/savesmith-$VERSION-macos-arm64"
+          cp artifacts/savesmith-macos-15-intel/savesmith \
+             "release/savesmith-$VERSION-macos-x64"
+          cp artifacts/savesmith-app-windows-latest/*.exe \
+             "release/SaveSmith-$VERSION-windows-x64-setup.exe"
+          cp artifacts/savesmith-app-macos-15/*.dmg \
+             "release/SaveSmith-$VERSION-macos-arm64.dmg"
+          cp artifacts/savesmith-app-macos-15-intel/*.dmg \
+             "release/SaveSmith-$VERSION-macos-x64.dmg"
+          ls -la release
+
+      # So that somebody who downloaded over a bad connection can tell, and so
+      # that "is this the file you built?" has an answer.
+      - name: Checksums
+        working-directory: release
+        run: shasum -a 256 * > SHA256SUMS.txt
+
+      - name: Write the release notes
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          {
+            sed "s/{VERSION}/$VERSION/g" docs/release-body.md
+            echo
+            echo "---"
+            echo
+            # Whatever was written in the tag message, if anything was.
+            git tag -l --format='%(contents)' "$GITHUB_REF_NAME"
+          } > notes.md
+          cat notes.md
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" release/* \
+            --title "SaveSmith $GITHUB_REF_NAME" \
+            --notes-file notes.md \
+            --verify-tag
