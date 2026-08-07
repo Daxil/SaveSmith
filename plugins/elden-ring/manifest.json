@@ -1,0 +1,301 @@
+{
+  "schema": 1,
+  "id": "elden-ring",
+  "version": 1,
+  "game": "ELDEN RING",
+  "engine": "fromsoft-bnd4",
+  "confidence": "probable",
+  "steam_appid": 1245620,
+  "detect": {
+    "paths": {
+      "windows": [
+        "{APPDATA}/EldenRing/*/ER0000.sl2"
+      ],
+      "wine_prefix": [
+        "drive_c/users/{WINEUSER}/AppData/Roaming/EldenRing/*/ER0000.sl2"
+      ]
+    },
+    "magic_hex": "424e4434"
+  },
+  "risk": {
+    "tier": "blocked",
+    "reason": {
+      "ru": "У Elden Ring общий прогресс между одиночной игрой и сетевой. Правленый сейв виден на серверах FromSoftware, и за это выдают бан на игру с другими людьми. Правь только если готов играть офлайн.",
+      "en": "Elden Ring shares progression between single player and online. An edited save is visible to FromSoftware's servers and gets the account banned from playing with others. Edit only if you are prepared to play offline."
+    },
+    "steam_cloud": true
+  },
+  "pipeline": [
+    {
+      "op": "bnd4",
+      "entry": "USER_DATA000"
+    },
+    {
+      "op": "fromsoft_slot",
+      "key_hex": "18f68356f5c3a1ab6a15e4b7a6ed9a3e"
+    },
+    {
+      "op": "fromsoft_character",
+      "walk": [
+        {
+          "skip": 32
+        },
+        {
+          "mark": "gaitems"
+        },
+        {
+          "gaitems": {
+            "count": 5120,
+            "weapon_extra": 13,
+            "armour_extra": 8
+          }
+        },
+        {
+          "mark": "character"
+        },
+        {
+          "skip": 432
+        },
+        {
+          "skip": 208
+        },
+        {
+          "skip": 88
+        },
+        {
+          "skip": 116
+        },
+        {
+          "skip": 88
+        },
+        {
+          "mark": "inventory_held"
+        },
+        {
+          "inventory": [
+            2688,
+            384
+          ]
+        }
+      ],
+      "fields": {
+        "base": "character",
+        "level": 96,
+        "runes": 100,
+        "runes_memory": 104,
+        "name": {
+          "offset": 148,
+          "bytes": 32
+        },
+        "attributes": {
+          "offset": 52,
+          "starting_total": 80,
+          "names": [
+            "vigor",
+            "mind",
+            "endurance",
+            "strength",
+            "dexterity",
+            "intelligence",
+            "faith",
+            "arcane"
+          ]
+        }
+      }
+    }
+  ],
+  "checksum": null,
+  "fields": [
+    {
+      "path": "runes",
+      "label": {
+        "ru": "Руны",
+        "en": "Runes"
+      },
+      "type": "int",
+      "min": 0,
+      "max": 999999999,
+      "group": {
+        "ru": "Персонаж",
+        "en": "Character"
+      }
+    },
+    {
+      "path": "level",
+      "label": {
+        "ru": "Уровень",
+        "en": "Level"
+      },
+      "type": "int",
+      "min": 1,
+      "max": 713,
+      "group": {
+        "ru": "Персонаж",
+        "en": "Character"
+      },
+      "warn": {
+        "ru": "Игра сверяет уровень с суммой характеристик. Расхождение она исправит сама, и не обязательно так, как хотелось.",
+        "en": "The game checks the level against the attributes and will fix a mismatch its own way."
+      }
+    },
+    {
+      "path": "runes_memory",
+      "label": {
+        "ru": "Память рун (всего собрано)",
+        "en": "Runes remembered"
+      },
+      "type": "int",
+      "min": 0,
+      "group": {
+        "ru": "Персонаж",
+        "en": "Character"
+      },
+      "advanced": true,
+      "achievement": true
+    },
+    {
+      "path": "attributes.vigor",
+      "label": {
+        "ru": "Живучесть",
+        "en": "Vigor"
+      },
+      "type": "int",
+      "min": 1,
+      "max": 99,
+      "group": {
+        "ru": "Характеристики",
+        "en": "Attributes"
+      },
+      "warn": {
+        "ru": "Уровень персонажа игра считает по сумме характеристик. Поменяешь характеристику — поменяй и уровень, иначе игра пересчитает его сама.",
+        "en": "The game derives the level from the attributes. Change one and change the level too, or the game will recompute it."
+      }
+    },
+    {
+      "path": "attributes.mind",
+      "label": {
+        "ru": "Разум",
+        "en": "Mind"
+      },
+      "type": "int",
+      "min": 1,
+      "max": 99,
+      "group": {
+        "ru": "Характеристики",
+        "en": "Attributes"
+      },
+      "warn": {
+        "ru": "Уровень персонажа игра считает по сумме характеристик. Поменяешь характеристику — поменяй и уровень, иначе игра пересчитает его сама.",
+        "en": "The game derives the level from the attributes. Change one and change the level too, or the game will recompute it."
+      }
+    },
+    {
+      "path": "attributes.endurance",
+      "label": {
+        "ru": "Выносливость",
+        "en": "Endurance"
+      },
+      "type": "int",
+      "min": 1,
+      "max": 99,
+      "group": {
+        "ru": "Характеристики",
+        "en": "Attributes"
+      },
+      "warn": {
+        "ru": "Уровень персонажа игра считает по сумме характеристик. Поменяешь характеристику — поменяй и уровень, иначе игра пересчитает его сама.",
+        "en": "The game derives the level from the attributes. Change one and change the level too, or the game will recompute it."
+      }
+    },
+    {
+      "path": "attributes.strength",
+      "label": {
+        "ru": "Сила",
+        "en": "Strength"
+      },
+      "type": "int",
+      "min": 1,
+      "max": 99,
+      "group": {
+        "ru": "Характеристики",
+        "en": "Attributes"
+      },
+      "warn": {
+        "ru": "Уровень персонажа игра считает по сумме характеристик. Поменяешь характеристику — поменяй и уровень, иначе игра пересчитает его сама.",
+        "en": "The game derives the level from the attributes. Change one and change the level too, or the game will recompute it."
+      }
+    },
+    {
+      "path": "attributes.dexterity",
+      "label": {
+        "ru": "Ловкость",
+        "en": "Dexterity"
+      },
+      "type": "int",
+      "min": 1,
+      "max": 99,
+      "group": {
+        "ru": "Характеристики",
+        "en": "Attributes"
+      },
+      "warn": {
+        "ru": "Уровень персонажа игра считает по сумме характеристик. Поменяешь характеристику — поменяй и уровень, иначе игра пересчитает его сама.",
+        "en": "The game derives the level from the attributes. Change one and change the level too, or the game will recompute it."
+      }
+    },
+    {
+      "path": "attributes.intelligence",
+      "label": {
+        "ru": "Интеллект",
+        "en": "Intelligence"
+      },
+      "type": "int",
+      "min": 1,
+      "max": 99,
+      "group": {
+        "ru": "Характеристики",
+        "en": "Attributes"
+      },
+      "warn": {
+        "ru": "Уровень персонажа игра считает по сумме характеристик. Поменяешь характеристику — поменяй и уровень, иначе игра пересчитает его сама.",
+        "en": "The game derives the level from the attributes. Change one and change the level too, or the game will recompute it."
+      }
+    },
+    {
+      "path": "attributes.faith",
+      "label": {
+        "ru": "Вера",
+        "en": "Faith"
+      },
+      "type": "int",
+      "min": 1,
+      "max": 99,
+      "group": {
+        "ru": "Характеристики",
+        "en": "Attributes"
+      },
+      "warn": {
+        "ru": "Уровень персонажа игра считает по сумме характеристик. Поменяешь характеристику — поменяй и уровень, иначе игра пересчитает его сама.",
+        "en": "The game derives the level from the attributes. Change one and change the level too, or the game will recompute it."
+      }
+    },
+    {
+      "path": "attributes.arcane",
+      "label": {
+        "ru": "Мистицизм",
+        "en": "Arcane"
+      },
+      "type": "int",
+      "min": 1,
+      "max": 99,
+      "group": {
+        "ru": "Характеристики",
+        "en": "Attributes"
+      },
+      "warn": {
+        "ru": "Уровень персонажа игра считает по сумме характеристик. Поменяешь характеристику — поменяй и уровень, иначе игра пересчитает его сама.",
+        "en": "The game derives the level from the attributes. Change one and change the level too, or the game will recompute it."
+      }
+    }
+  ]
+}

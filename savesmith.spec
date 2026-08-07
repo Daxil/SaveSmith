@@ -23,6 +23,7 @@ a = Analysis(
         "savesmith.core.ops.compress",
         "savesmith.core.ops.crypto",
         "savesmith.core.ops.fromsoft",
+        "savesmith.core.ops.fromsoft_character",
         "savesmith.core.ops.gvas",
         "savesmith.core.ops.lzstring",
         "savesmith.core.ops.packed",
