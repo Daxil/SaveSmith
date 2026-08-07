@@ -15,6 +15,9 @@ a = Analysis(
     # when frozen, which is the whole reason that module exists.
     datas=[("plugins", "plugins")],
     hiddenimports=[
+        # Reached only through a function-level import in the CLI, so it is
+        # named here rather than left to the analyser to notice.
+        "savesmith.mcp",
         # Operations register themselves by being imported, and PyInstaller
         # cannot see an import that happens for its side effect alone.
         "savesmith.core.ops.binary",

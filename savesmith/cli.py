@@ -296,6 +296,19 @@ def _cmd_rpc(_arguments: argparse.Namespace, system: SystemFacade) -> int:
     return Server(system=system).serve()
 
 
+def _cmd_mcp(_arguments: argparse.Namespace, system: SystemFacade) -> int:
+    """Serve the Model Context Protocol on stdin and stdout.
+
+    For the game nobody has written a plugin for: the user points their own
+    assistant at this, and it works the format out by composing operations
+    SaveSmith already has. It can look and it can propose; it cannot write to a
+    save, and the acknowledgements stay with the person they belong to.
+    """
+    from savesmith.mcp import Server as McpServer
+
+    return McpServer(system=system).serve()
+
+
 def _cmd_search(arguments: argparse.Namespace, system: SystemFacade) -> int:
     """Where does this number live in this save?
 
@@ -1124,6 +1137,12 @@ def _parser() -> argparse.ArgumentParser:
         "--numbers-only", action="store_true", help="hide changes that are not numbers"
     )
     diff.set_defaults(handler=_cmd_diff)
+
+    mcp_command = subparsers.add_parser(
+        "mcp",
+        help="offer SaveSmith as tools to an assistant (Claude Code, Codex and the like)",
+    )
+    mcp_command.set_defaults(handler=_cmd_mcp)
 
     rpc_command = subparsers.add_parser(
         "rpc", help="serve JSON-RPC on stdin and stdout (used by the window)"
