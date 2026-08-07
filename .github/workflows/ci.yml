@@ -92,6 +92,34 @@ jobs:
           path: dist/savesmith*
           if-no-files-found: error
 
+  # Whether a release could be published, asked on every push rather than
+  # discovered at tag time.
+  #
+  # A secret cannot be read back by anybody, including whoever set it, so the
+  # only way to know it is there is to look for it from inside a workflow. Left
+  # unchecked, a missing key surfaces half an hour into a tagged build, after
+  # the tests and three app builds have run — which is half an hour after it
+  # was worth knowing.
+  release_readiness:
+    name: Ready to release?
+    runs-on: ubuntu-latest
+    # Secrets are withheld from pull requests raised off a fork, so asking
+    # there would report a problem that does not exist.
+    if: github.event_name != 'pull_request'
+    timeout-minutes: 5
+    steps:
+      - name: The updater key is where a release will look for it
+        env:
+          KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          if [ -z "$KEY" ]; then
+            echo "::warning title=No updater key::TAURI_SIGNING_PRIVATE_KEY is not set." \
+                 "Tagging a release now would fail on purpose, because the app it built" \
+                 "could never update itself. Settings → Secrets and variables → Actions."
+          else
+            echo "TAURI_SIGNING_PRIVATE_KEY is set. A release can be published."
+          fi
+
   # The window, and the shell around it. Kept apart from `test` so that a
   # broken Rust toolchain cannot hide a failing core test, and so the core
   # keeps building on machines that have no Rust at all.
