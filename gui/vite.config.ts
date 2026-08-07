@@ -20,6 +20,20 @@ const BINARY = resolve(__dirname, "..", "dist", "savesmith");
  * this process can rewrite save files. Here the port is Vite's, it only exists
  * while somebody is developing, and it is not part of what ships.
  */
+/**
+ * A reply carries the id it is answering; a notification has none.
+ *
+ * Anything unreadable counts as a reply so that a request fails loudly instead
+ * of waiting for an answer that has already been thrown away.
+ */
+function isReply(line: string): boolean {
+  try {
+    return (JSON.parse(line) as { id?: unknown }).id !== undefined;
+  } catch {
+    return true;
+  }
+}
+
 function backendBridge(): Plugin {
   let backend: ChildProcessWithoutNullStreams | null = null;
   const waiting: ((line: string) => void)[] = [];
@@ -40,7 +54,14 @@ function backendBridge(): Plugin {
       while (newline >= 0) {
         const line = buffered.slice(0, newline);
         buffered = buffered.slice(newline + 1);
-        waiting.shift()?.(line);
+        // Long calls print progress before their result. Handing one of those
+        // back as the answer would give the interface a progress report where
+        // it asked for a save file, so only replies are answers.
+        if (isReply(line)) {
+          waiting.shift()?.(line);
+        } else {
+          console.log(`[savesmith] ${line}`);
+        }
         newline = buffered.indexOf("\n");
       }
     });

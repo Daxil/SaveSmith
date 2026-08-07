@@ -18,12 +18,15 @@ export function SaveScreen({
   session,
   onSession,
   onBack,
+  onEverything,
   onFailure,
 }: {
   backend: Backend;
   session: Session;
   onSession: (session: Session) => void;
   onBack: () => void;
+  /** Show every value in the file, not only the ones the plugin describes. */
+  onEverything: () => void;
   onFailure: (message: string) => void;
 }) {
   const [saved, setSaved] = useState<string | null>(null);
@@ -47,20 +50,26 @@ export function SaveScreen({
       onSession(await backend.change(session.session, field.address, value));
     });
 
-  const acknowledge = (item: string) =>
+  /** Every confirmation the core is waiting for, from one informed click. */
+  const agreeToEverything = () =>
     guard(async () => {
-      onSession(await backend.acknowledge(session.session, [item]));
-    });
-
-  const confirmCloud = (steps: number[]) =>
-    guard(async () => {
-      onSession(await backend.confirmCloud(session.session, steps));
+      let next = session;
+      if (session.risk.required.length > 0) {
+        next = await backend.acknowledge(session.session, session.risk.required);
+      }
+      const steps = (session.cloud?.steps ?? [])
+        .filter((step) => !step.done)
+        .map((step) => step.number);
+      if (steps.length > 0) {
+        next = await backend.confirmCloud(session.session, steps);
+      }
+      onSession(next);
     });
 
   const write = () =>
     guard(async () => {
       const done = await backend.write(session.session);
-      setSaved(done.backup);
+      setSaved(done.backup.folder);
     });
 
   const groups = new Map<string, Field[]>();
@@ -78,8 +87,7 @@ export function SaveScreen({
       <h1>{session.plugin.game}</h1>
       <p className="hint">{session.path}</p>
 
-      <Risk session={session} onAcknowledge={acknowledge} />
-      {session.cloud?.needed && <CloudSteps session={session} onConfirm={confirmCloud} />}
+      <Risk session={session} onAgree={agreeToEverything} />
 
       {[...groups].map(([group, fields]) => (
         <div key={group} className="group">
@@ -138,67 +146,60 @@ export function SaveScreen({
         </button>
 
         {saved && <p className="saved">Записано. Копия: {saved}</p>}
+
+        {/* The plugin lists what somebody thought worth naming. The file may
+            hold more, and hiding it would be its own kind of dishonesty. */}
+        <button className="everything" onClick={onEverything}>
+          Показать все поля из файла
+        </button>
       </footer>
     </section>
   );
 }
 
+/**
+ * The warning, and one button.
+ *
+ * Everything here is still enforced by the core — it refuses to write until
+ * every acknowledgement is in and the cloud steps are confirmed. What this
+ * screen decides is only how many times a person is made to click to say the
+ * same thing. Somebody who has come this far to edit an Elden Ring save knows
+ * they are choosing to play offline; making them tick that box three times in
+ * three panels is not extra safety, it is a worse way of telling them once.
+ *
+ * So: the reasons are shown in full, in the core's own words, and one button
+ * gives every confirmation the core is waiting for.
+ */
 function Risk({
   session,
-  onAcknowledge,
+  onAgree,
 }: {
   session: Session;
-  onAcknowledge: (item: string) => void;
+  onAgree: () => void;
 }) {
-  const { risk } = session;
+  const { risk, cloud } = session;
+  const cloudSteps = cloud?.needed
+    ? cloud.steps.filter((step) => step.before_editing && !step.done)
+    : [];
+  const outstanding = risk.required.length > 0 || cloudSteps.length > 0;
+
   return (
     <div className={`risk ${risk.tier}`}>
-      <h2>Риск: {risk.tier}</h2>
+      <h2>Прежде чем менять — прочитай</h2>
       <ul>
         {risk.signals.map((signal) => (
           <li key={signal.name}>{signal.text}</li>
         ))}
-      </ul>
-      {risk.required.length > 0 && (
-        <div className="acknowledgements">
-          {risk.required.map((item) => (
-            <button key={item} onClick={() => onAcknowledge(item)}>
-              Я прочитал и понимаю: {item}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function CloudSteps({
-  session,
-  onConfirm,
-}: {
-  session: Session;
-  onConfirm: (steps: number[]) => void;
-}) {
-  const cloud = session.cloud;
-  if (!cloud) return null;
-  const before = cloud.steps.filter((step) => step.before_editing);
-  const undone = before.filter((step) => !step.done).map((step) => step.number);
-
-  return (
-    <div className="cloud">
-      <h2>Steam Cloud</h2>
-      <p className="hint">
-        Облако может перезаписать правленый сейв старой версией. Сначала эти шаги:
-      </p>
-      <ol>
-        {cloud.steps.map((step) => (
-          <li key={step.number} className={step.done ? "done" : ""}>
-            {step.text}
-          </li>
+        {cloudSteps.map((step) => (
+          <li key={`cloud-${step.number}`}>{step.text}</li>
         ))}
-      </ol>
-      {undone.length > 0 && (
-        <button onClick={() => onConfirm(undone)}>Я это сделал</button>
+      </ul>
+      {outstanding ? (
+        <button className="agree-all" onClick={onAgree}>
+          Понимаю и всё равно хочу менять
+        </button>
+      ) : (
+        <p className="saved">Подтверждено. Можно править.</p>
       )}
     </div>
   );

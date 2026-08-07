@@ -28,3 +28,8 @@ htmlcov/
 gui/node_modules/
 gui/dist/
 gui/src-tauri/target/
+# The backend, copied in under its host triple by scripts/sidecar.mjs. Built by
+# PyInstaller, so it is an artifact wherever it sits.
+gui/src-tauri/binaries/
+# Tauri regenerates these from capabilities/ on every build.
+gui/src-tauri/gen/schemas/

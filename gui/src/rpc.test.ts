@@ -10,8 +10,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { Backend, BridgeTransport, RpcError } from "./rpc";
 
+// The parameters are spelled out, unused as they are here, so that the recorded
+// calls keep their shape and `sentBody` can read the request back.
 function answering(body: unknown, ok = true, status = 200) {
-  const fetching = vi.fn(async () => ({
+  const fetching = vi.fn(async (_url: string, _options?: RequestInit) => ({
     ok,
     status,
     json: async () => body,
@@ -21,8 +23,8 @@ function answering(body: unknown, ok = true, status = 200) {
 }
 
 function sentBody(fetching: ReturnType<typeof answering>, call = 0) {
-  const options = fetching.mock.calls[call]?.[1] as { body: string } | undefined;
-  return JSON.parse(options?.body ?? "{}");
+  const options = fetching.mock.calls[call]?.[1];
+  return JSON.parse(String(options?.body ?? "{}"));
 }
 
 afterEach(() => vi.unstubAllGlobals());

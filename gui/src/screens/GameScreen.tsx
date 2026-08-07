@@ -1,13 +1,25 @@
 /**
- * Step two: what was found, and which save to open.
+ * Step two: the save.
  *
- * Saves the decoder ladder recognised come first and are the only ones offered
- * for editing; the rest are listed so that "nothing found" is never a silent
- * answer. Unity settings appear here too — a game that keeps its coins in the
- * registry is not a game without saves.
+ * One rule, learned the hard way: this screen answers the question. It does not
+ * hand over a file listing and ask the player to work it out. The Invincible
+ * keeps sixty-two rolling backups, four settings files and one save; the older
+ * version of this screen showed all sixty-seven, and an Elden Ring save was
+ * listed under "format not recognised" directly beneath the words "nothing
+ * found".
+ *
+ * So: the player's saves are shown, everything else is counted in one line, and
+ * files that are not saves are never listed at all. The backend decides which
+ * is which — `kind` — so the command line and the window agree.
  */
 
-import type { FoundGame } from "../rpc";
+import type { FoundGame, FoundSave } from "../rpc";
+
+const ASIDE_WORDS: Record<string, [string, string]> = {
+  backup: ["резервную копию", "резервных копий"],
+  settings: ["файл настроек", "файлов настроек"],
+  other: ["служебный файл", "служебных файлов"],
+};
 
 export function GameScreen({
   found,
@@ -15,12 +27,17 @@ export function GameScreen({
   onBack,
 }: {
   found: FoundGame;
-  onOpen: (path: string) => void;
+  onOpen: (save: FoundSave) => void;
   onBack: () => void;
 }) {
   const { game, saves, prefs, bottle } = found;
-  const readable = saves.filter((save) => save.recognised);
-  const rest = saves.filter((save) => !save.recognised);
+  const mine = saves.filter((save) => save.kind === "save");
+  // A plugin beats the generic ladder: it is what turns bytes into "Руны".
+  const editable = mine.filter((save) => save.plugin !== null || save.recognised);
+  const byAddress = mine.filter((save) => save.plugin === null && !save.recognised);
+  // The same game can be installed twice — two bottles, a reinstall — and then
+  // two saves both look right. The newest is the one being played.
+  const newest = mine.reduce<number>((best, save) => Math.max(best, save.modified), 0);
 
   return (
     <section className="game">
@@ -31,20 +48,51 @@ export function GameScreen({
       <h1>{game.title}</h1>
       <p className="hint">
         Движок: {game.engine}
-        {bottle && ` · ${bottle}`}
+        {bottle && ` · в бутылке ${bottle}`}
         {game.anticheat.length > 0 && ` · анти-чит: ${game.anticheat.join(", ")}`}
       </p>
 
-      {readable.length > 0 && (
+      {editable.length > 0 && (
         <>
-          <h2>Сохранения</h2>
+          <h2>{editable.length === 1 ? "Сохранение" : "Сохранения"}</h2>
           <ul className="saves">
-            {readable.map((save) => (
+            {editable.map((save) => (
               <li key={save.path}>
-                <button onClick={() => onOpen(save.path)}>
+                <button onClick={() => onOpen(save)}>
                   <span className="name">{basename(save.path)}</span>
                   <span className="meta">
-                    {save.format} · {bytes(save.size)}
+                    {bytes(save.size)} · {when(save.modified)}
+                    {save.modified === newest && mine.length > 1 && (
+                      <span className="tag latest">последний</span>
+                    )}
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+
+      {byAddress.length > 0 && (
+        <>
+          <h2>
+            {byAddress.length === 1 ? "Сохранение" : "Сохранения"} — правится по числу
+          </h2>
+          <p className="hint">
+            Для этой игры никто не описал, что означают байты внутри, поэтому полей
+            по именам здесь нет. Зато есть другой путь: говоришь, какое число видишь
+            в игре, и SaveSmith находит его в файле.
+          </p>
+          <ul className="saves">
+            {byAddress.map((save) => (
+              <li key={save.path}>
+                <button onClick={() => onOpen(save)}>
+                  <span className="name">{basename(save.path)}</span>
+                  <span className="meta">
+                    {bytes(save.size)} · {when(save.modified)}
+                    {save.modified === newest && mine.length > 1 && (
+                      <span className="tag latest">последний</span>
+                    )}
                   </span>
                 </button>
               </li>
@@ -70,9 +118,9 @@ export function GameScreen({
         </>
       )}
 
-      {readable.length === 0 && !prefs && (
+      {mine.length === 0 && !prefs && (
         <p className="empty">
-          Ничего похожего на сохранение не нашлось. Проверено:
+          Сохранений не нашлось. Искал здесь:
           <br />
           {found.searched.map((place) => (
             <code key={place}>{place}</code>
@@ -80,21 +128,43 @@ export function GameScreen({
         </p>
       )}
 
-      {rest.length > 0 && (
-        <details>
-          <summary>Ещё {rest.length} файл(ов), формат которых не распознан</summary>
-          <ul className="saves muted">
-            {rest.slice(0, 30).map((save) => (
-              <li key={save.path}>
-                <span className="name">{basename(save.path)}</span>
-                <span className="meta">{bytes(save.size)}</span>
-              </li>
-            ))}
-          </ul>
-        </details>
-      )}
+      <Aside aside={found.aside} />
     </section>
   );
+}
+
+/**
+ * Everything that is not the player's save, counted and not listed.
+ *
+ * It is here so the screen is not silently hiding things — but a count is the
+ * right amount of detail. Nobody wants to scroll sixty-two backups.
+ */
+function Aside({ aside }: { aside: FoundGame["aside"] }) {
+  const parts = Object.entries(aside)
+    .filter(([, count]) => (count ?? 0) > 0)
+    .map(([kind, count]) => {
+      const words = ASIDE_WORDS[kind] ?? [kind, kind];
+      const n = count ?? 0;
+      return `${n} ${n === 1 ? words[0] : words[1]}`;
+    });
+  if (parts.length === 0) return null;
+
+  return (
+    <p className="note aside">
+      Рядом лежит ещё {parts.join(", ")} — это файлы самой игры, не твой прогресс.
+    </p>
+  );
+}
+
+/** When the game last wrote it, in words a person reads at a glance. */
+function when(seconds: number): string {
+  if (!seconds) return "";
+  return new Date(seconds * 1000).toLocaleString("ru-RU", {
+    day: "numeric",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 function basename(path: string): string {

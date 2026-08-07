@@ -87,3 +87,85 @@ jobs:
           name: savesmith-${{ matrix.os }}
           path: dist/savesmith*
           if-no-files-found: error
+
+  # The window, and the shell around it. Kept apart from `test` so that a
+  # broken Rust toolchain cannot hide a failing core test, and so the core
+  # keeps building on machines that have no Rust at all.
+  app:
+    name: App, ${{ matrix.label }}
+    needs: test
+    runs-on: ${{ matrix.os }}
+    # Compiling the shell from scratch is slow the first time and cached
+    # afterwards; 45 leaves room for the cold run.
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            label: Windows
+          - os: macos-15
+            label: macOS arm64
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: gui/package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: gui/src-tauri
+
+      # The same binary the previous job built and proved, rather than a second
+      # one built differently here. The window and the command line have to be
+      # the same program or a bug fixed in one survives in the other.
+      - uses: actions/download-artifact@v4
+        with:
+          name: savesmith-${{ matrix.os }}
+          path: dist
+
+      - name: The backend is executable
+        if: runner.os != 'Windows'
+        run: chmod +x dist/savesmith
+
+      - name: Install dependencies
+        working-directory: gui
+        run: npm ci
+
+      # Before anything cargo does: the build script checks that the declared
+      # externalBin is really there, so a missing sidecar fails the lint rather
+      # than the bundling, ten minutes later.
+      - name: Put the backend where Tauri looks for it
+        working-directory: gui
+        run: npm run sidecar
+
+      - name: Lint the shell
+        working-directory: gui/src-tauri
+        run: |
+          cargo fmt --check
+          cargo clippy --all-targets -- -D warnings
+
+      - name: Frontend tests
+        working-directory: gui
+        run: npm test
+
+      # Runs tsc, builds the frontend, copies the backend in as a sidecar and
+      # bundles the lot.
+      - name: Build the app
+        working-directory: gui
+        run: npm run app:build
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: savesmith-app-${{ matrix.os }}
+          path: |
+            gui/src-tauri/target/release/bundle/dmg/*.dmg
+            gui/src-tauri/target/release/bundle/nsis/*.exe
+          if-no-files-found: error

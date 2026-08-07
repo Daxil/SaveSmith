@@ -11,12 +11,21 @@
 
 import { useCallback, useEffect, useState } from "react";
 
-import { Backend, BridgeTransport, RpcError, type FoundGame, type Session } from "./rpc";
+import {
+  Backend,
+  RpcError,
+  packaged,
+  transportForHere,
+  type FoundGame,
+  type FoundSave,
+  type Session,
+} from "./rpc";
 import { GameScreen } from "./screens/GameScreen";
-import { PickFolder } from "./screens/PickFolder";
+import { NumberScreen } from "./screens/NumberScreen";
+import { PickGame } from "./screens/PickGame";
 import { SaveScreen } from "./screens/SaveScreen";
 
-const backend = new Backend(new BridgeTransport());
+const backend = new Backend(transportForHere());
 
 export type Failure = { message: string } | null;
 
@@ -25,6 +34,8 @@ export function App() {
   const [folder, setFolder] = useState<string | null>(null);
   const [found, setFound] = useState<FoundGame | null>(null);
   const [session, setSession] = useState<Session | null>(null);
+  // A save no plugin describes: edited by number rather than by field.
+  const [byNumber, setByNumber] = useState<FoundSave | null>(null);
   const [failure, setFailure] = useState<Failure>(null);
   const [busy, setBusy] = useState(false);
 
@@ -50,15 +61,22 @@ export function App() {
   const openFolder = (picked: string) =>
     guard(async () => {
       setSession(null);
+      setByNumber(null);
       setFolder(picked);
       setFound(await backend.findSaves(picked));
     });
 
-  const openSave = (path: string) =>
+  const openSave = (save: FoundSave) =>
     guard(async () => {
+      // Fields by name when a plugin knows the format; otherwise the only
+      // honest route in is the number the player can see on screen.
+      if (save.plugin === null && !save.recognised) {
+        setByNumber(save);
+        return;
+      }
       // The folder goes with it: that is where anti-cheat lives, and the risk
       // screen is worth less without it.
-      setSession(await backend.open(path, folder ?? undefined));
+      setSession(await backend.open(save.path, folder ?? undefined));
     });
 
   const leaveSave = () =>
@@ -82,18 +100,38 @@ export function App() {
       )}
 
       <main>
-        {session ? (
+        {byNumber ? (
+          <NumberScreen
+            backend={backend}
+            save={byNumber}
+            gameFolder={folder}
+            onBack={() => setByNumber(null)}
+            onFailure={(message) => setFailure({ message })}
+          />
+        ) : session ? (
           <SaveScreen
             backend={backend}
             session={session}
             onSession={setSession}
             onBack={leaveSave}
+            onEverything={() => {
+              const save = found?.saves.find((item) => item.path === session.path);
+              if (save) setByNumber(save);
+            }}
             onFailure={(message) => setFailure({ message })}
           />
         ) : found ? (
           <GameScreen found={found} onOpen={openSave} onBack={() => setFound(null)} />
         ) : (
-          <PickFolder onPick={openFolder} busy={busy} />
+          <PickGame
+            backend={backend}
+            onPick={openFolder}
+            busy={busy}
+            // Only the packaged app has native dialogs; in a browser tab the
+            // text field is all there is.
+            canBrowse={packaged()}
+            onFailure={(message) => setFailure({ message })}
+          />
         )}
       </main>
     </div>

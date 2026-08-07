@@ -20,6 +20,8 @@
  * halves disagree.
  */
 
+import { invoke } from "@tauri-apps/api/core";
+
 export type RpcParams = Record<string, unknown>;
 
 export class RpcError extends Error {
@@ -81,6 +83,47 @@ export class BridgeTransport implements Transport {
   }
 }
 
+/**
+ * The packaged transport: the shell holds the backend open and matches answers
+ * by id, so several calls may be in flight and progress notifications do not
+ * get mistaken for results.
+ *
+ * The envelope that comes back is the one the core wrote, so a refusal is
+ * unpacked here exactly as the bridge unpacks it. Only a backend that has
+ * stopped talking arrives as a rejected `invoke`.
+ */
+export class SidecarTransport implements Transport {
+  readonly kind = "sidecar";
+
+  async send(method: string, params: RpcParams): Promise<unknown> {
+    let answer: Answer;
+    try {
+      answer = (await invoke("rpc", { method, params })) as Answer;
+    } catch (failure) {
+      throw new RpcError(typeof failure === "string" ? failure : String(failure), 0);
+    }
+    if (answer.error) {
+      throw new RpcError(answer.error.message, answer.error.code);
+    }
+    return answer.result;
+  }
+}
+
+/** True when the window is the packaged app rather than a browser tab. */
+export function packaged(): boolean {
+  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+}
+
+/**
+ * The right transport for wherever this is running.
+ *
+ * Development and the shipped app talk to the same binary over the same
+ * protocol; only the pipe differs, and nothing above this line knows which.
+ */
+export function transportForHere(): Transport {
+  return packaged() ? new SidecarTransport() : new BridgeTransport();
+}
+
 /** Everything the interface can ask for, named the way the backend names it. */
 export class Backend {
   readonly #transport: Transport;
@@ -110,6 +153,11 @@ export class Backend {
     return this.#call("scan", {});
   }
 
+  /** Every game on this machine, for the first screen to offer as a list. */
+  games(): Promise<GameList> {
+    return this.#call("games", {});
+  }
+
   findSaves(folder: string): Promise<FoundGame> {
     return this.#call("find_saves", { folder });
   }
@@ -131,7 +179,13 @@ export class Backend {
     return this.#call("confirm_cloud", { session, steps });
   }
 
-  write(session: string): Promise<{ written: boolean; backup: string; path: string }> {
+  /**
+   * Writes the pending changes. The backup comes back as an object, not a
+   * string — this said `string` for a while, the screen rendered it as one,
+   * and React unmounted the whole tree over it. A black window is what a type
+   * that lies about the wire looks like from the outside.
+   */
+  write(session: string): Promise<Session & { written: boolean; backup: Backup }> {
     return this.#call("write", { session });
   }
 
@@ -139,8 +193,36 @@ export class Backend {
     return this.#call("close", { session });
   }
 
+  /** Every value in a save, named the way the game named it. No plugin. */
+  fields(path: string): Promise<FieldList> {
+    return this.#call("fields", { path });
+  }
+
   search(path: string, value: number): Promise<SearchResult> {
     return this.#call("search", { path, value });
+  }
+
+  /**
+   * Change a number by address, in a save no plugin describes.
+   *
+   * `confirmed` is a wall in the backend, not a formality: without it the call
+   * is refused. The screen has to have shown the player that SaveSmith cannot
+   * say what this number does before it may pass it.
+   */
+  poke(
+    path: string,
+    address: string,
+    value: number,
+    options: { confirmed?: boolean; dryRun?: boolean; gameFolder?: string } = {},
+  ): Promise<PokeResult> {
+    return this.#call("poke", {
+      path,
+      address,
+      value,
+      confirmed: options.confirmed ?? false,
+      dry_run: options.dryRun ?? false,
+      game_folder: options.gameFolder,
+    });
   }
 
   backups(plugin: string): Promise<{ backups: BackupEntry[] }> {
@@ -168,10 +250,41 @@ export interface ScanResult {
   bottles: { name: string; kind: string; path: string; users: string[] }[];
 }
 
+export interface InstalledGame {
+  name: string;
+  /** What to hand back as the folder — an install folder, an .exe or an .app. */
+  path: string;
+  source: string;
+  bottle: string | null;
+  steam_appid: number | null;
+  installed: boolean;
+  risk_tier: string | null;
+}
+
+export interface GameList {
+  games: InstalledGame[];
+  problems: string[];
+}
+
 export interface FoundSave {
   path: string;
   format: string;
+  /** Fields can be read out of it, so it can be edited by name. */
   recognised: boolean;
+  /** Format understood and rebuilds exactly, but its fields are unmapped. */
+  openable: boolean;
+  /**
+   * The plugin that reads this file by name, if one does.
+   *
+   * This and not `recognised` decides whether named fields can be shown: the
+   * generic decoder ladder has nothing to say about an Elden Ring slot, and
+   * the plugin has everything.
+   */
+  plugin: string | null;
+  /** What it is. Only "save" is the player's; the rest are the game's own. */
+  kind: "save" | "backup" | "settings" | "other";
+  /** Unix seconds. Which save is the live one is a question only this answers. */
+  modified: number;
   size: number;
 }
 
@@ -193,6 +306,8 @@ export interface FoundGame {
   searched: string[];
   prefs: { location: string; entries: PrefsEntry[] } | null;
   saves: FoundSave[];
+  /** How many of everything that is not a save, counted rather than listed. */
+  aside: Partial<Record<"backup" | "settings" | "other", number>>;
 }
 
 export interface Field {
@@ -239,6 +354,13 @@ export interface Cloud {
   steps: CloudStep[];
 }
 
+export interface Backup {
+  /** Where the copy was put. */
+  folder: string;
+  /** How it is listed in `savesmith backups`. */
+  label: string;
+}
+
 export interface Change {
   field: string;
   before: unknown;
@@ -265,10 +387,43 @@ export interface Session {
   may_write: boolean;
 }
 
+export interface Leaf {
+  address: string;
+  /** The field's own name, as the game wrote it into the file. */
+  name: string;
+  /** Everything before it in the path, for grouping. */
+  group: string;
+  value: unknown;
+  kind: "number" | "text" | "flag" | "list";
+  /** Numbers only, for now: that is all the backend will write. */
+  editable: boolean;
+}
+
+export interface FieldList {
+  format: string;
+  structured: boolean;
+  fields: Leaf[];
+}
+
+export interface Site {
+  address: string;
+  value: number;
+  context: string;
+}
+
 export interface SearchResult {
   format: string;
   structured: boolean;
-  sites: { address: string; value: number; context: string }[];
+  sites: Site[];
+}
+
+export interface PokeResult {
+  written: boolean;
+  address: string;
+  before: unknown;
+  after: unknown;
+  backup?: string;
+  risk: { tier: string; signals: Signal[] } | null;
 }
 
 export interface BackupEntry {
