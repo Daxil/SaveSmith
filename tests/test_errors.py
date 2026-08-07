@@ -13,6 +13,7 @@ import pytest
 
 from savesmith.agent.sandbox import SandboxError
 from savesmith.core.catalog import CatalogError
+from savesmith.core.contribute import ContributionError
 from savesmith.core.direct import AddressError, NoFormatError
 from savesmith.core.errors import (
     AmbiguousWineUserError,
@@ -72,6 +73,11 @@ SAMPLES: list[SaveSmithError] = [
         "The item list beside this plugin could not be read, so items will show "
         "as bare numbers.",
         detail="items.json: line 1",
+    ),
+    ContributionError(
+        "Nothing to check the plugin against. Point at a save file or at the game, so "
+        "the plugin can be proved on real data before it is offered to anybody else.",
+        detail="plugin coin-quest",
     ),
 ]
 

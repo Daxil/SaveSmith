@@ -11,6 +11,7 @@ import gzip
 import json
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 import pytest
 
@@ -954,3 +955,70 @@ class TestItems:
     ) -> None:
         assert run("items", str(save), "--remove", "1") == 0
         assert json.loads(gzip.decompress(save.read_bytes()))["items"] == {}
+
+
+class TestSubmittingAPlugin:
+    """The road back: work done once, offered to everybody else.
+
+    Both tests here are refusals, because those are what protect the person
+    doing the sending and the person receiving it.
+    """
+
+    def test_a_working_plugin_produces_a_prefilled_link(
+        self,
+        home: FakeSystem,
+        plugin_installed: Path,
+        save: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        assert run("plugins", "--submit", "cli-test-game", "--saves", str(save)) == 0
+
+        out = capsys.readouterr().out
+        link = next(line for line in out.splitlines() if line.startswith("https://"))
+        assert "issues/new" in link
+        # What is *not* in what travels matters more than what is. The report
+        # above it names the checked files on the sender's own screen, which is
+        # their business; the link is the part that leaves the machine.
+        assert save.name not in link
+        assert quote(save.name) not in link
+
+    def test_a_plugin_that_cannot_rebuild_a_save_is_not_offered(
+        self,
+        home: FakeSystem,
+        plugin_installed: Path,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        broken = tmp_path / "not-a-save.dat"
+        broken.write_bytes(b"nothing this plugin can read")
+
+        assert run("plugins", "--submit", "cli-test-game", "--saves", str(broken)) == 1
+
+        assert "corrupt somebody else's save" in capsys.readouterr().out
+
+    def test_a_manifest_with_the_author_s_own_path_is_stopped(
+        self,
+        home: FakeSystem,
+        plugin_installed: Path,
+        save: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """An issue tracker is public and cannot be un-published."""
+        manifest = json.loads((plugin_installed / "manifest.json").read_text(encoding="utf-8"))
+        manifest["detect"] = {"paths": {"windows": ["C:\\Users\\danil\\Games\\save.dat"]}}
+        (plugin_installed / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+        assert run("plugins", "--submit", "cli-test-game", "--saves", str(save)) == 1
+
+        out = capsys.readouterr().out
+        assert "путь к домашней папке" in out
+        assert "github.com" not in out
+
+    def test_without_saves_to_prove_it_on_it_refuses(
+        self,
+        home: FakeSystem,
+        plugin_installed: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        assert run("plugins", "--submit", "cli-test-game") == 1
+        assert "guesses are what corrupt saves" in capsys.readouterr().err

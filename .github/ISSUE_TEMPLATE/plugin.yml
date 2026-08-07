@@ -1,0 +1,52 @@
+name: Плагин для игры
+description: Ты разобрался с игрой, которой у нас нет, и хочешь отдать это остальным
+labels: ["plugin"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Спасибо. Работа по выяснению, где игра держит свои числа, стоит ровно
+        столько, скольких людей она достанет — а достаёт она пока одного тебя.
+
+        **Файл сохранения не прикладывай.** Нам нужно описание формата, а в сейве
+        лежит имя персонажа, Steam ID и сколько ты наиграл. Это разные вещи, и
+        вторая никого не касается.
+
+        Проще всего собрать это сообщение командой — она заодно проверит плагин
+        на твоих сохранениях и предупредит, если в манифест затесалось личное:
+
+        ```
+        savesmith plugins --submit <id-плагина> --saves "<путь к игре>"
+        ```
+  - type: input
+    id: game
+    attributes:
+      label: Игра
+      placeholder: Coin Quest
+    validations:
+      required: true
+  - type: textarea
+    id: manifest
+    attributes:
+      label: Манифест
+      description: Содержимое manifest.json, или перетащи сюда сам файл
+      render: json
+    validations:
+      required: true
+  - type: input
+    id: checked
+    attributes:
+      label: На скольких сохранениях проверено
+      description: Каждое должно разбираться и собираться обратно байт в байт
+      placeholder: "3, все прошли"
+    validations:
+      required: true
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Подтверждаю
+      options:
+        - label: Сохранения я не прикладывал
+          required: true
+        - label: В манифесте нет моих путей, имени пользователя и Steam ID
+          required: true

@@ -20,14 +20,23 @@ from typing import Any
 
 from savesmith.agent.discovery import discover as run_discovery
 from savesmith.agent.writer import DEFAULT_MODEL
-from savesmith.core import catalog, compare, detect, diagnostics, direct, library, playerprefs
+from savesmith.core import (
+    catalog,
+    compare,
+    contribute,
+    detect,
+    diagnostics,
+    direct,
+    library,
+    playerprefs,
+)
 from savesmith.core import checksum as checksum_module
 from savesmith.core.backup import BackupStore
 from savesmith.core.console import use_utf8
 from savesmith.core.discover import Discovery, GameFolder, Look, examine, look_at
 from savesmith.core.errors import SaveSmithError
 from savesmith.core.paths import RealSystem, SystemFacade
-from savesmith.core.plugin import ContainerSpec, Plugin
+from savesmith.core.plugin import MANIFEST_NAME, ContainerSpec, Plugin
 from savesmith.core.repository import verify
 from savesmith.core.risk import Acknowledgement, Assessment, RiskDatabase, assess
 from savesmith.core.session import EditSession
@@ -741,6 +750,8 @@ def _cmd_plugins(arguments: argparse.Namespace, system: SystemFacade) -> int:
     if arguments.remove:
         print("Removed." if store.remove(arguments.remove) else "There was nothing to remove.")
         return 0
+    if arguments.submit:
+        return _submit_plugin(arguments, system, store)
 
     catalogue = store.catalogue()
     for plugin in sorted(catalogue.plugins, key=lambda item: item.id):
@@ -748,6 +759,99 @@ def _cmd_plugins(arguments: argparse.Namespace, system: SystemFacade) -> int:
     for problem in catalogue.problems:
         print(f"  ! {problem.user_message}")
     return 0
+
+
+def _submit_plugin(
+    arguments: argparse.Namespace, system: SystemFacade, store: PluginStore
+) -> int:
+    """Offer a plugin to everybody else, once it has proved itself here.
+
+    The work of finding where a game keeps its numbers is worth as much as the
+    number of people it reaches, and until this existed it reached one.
+    """
+    plugin = store.catalogue().by_id(arguments.submit)
+    if plugin is None:
+        raise SaveSmithError(
+            f"There is no plugin called '{arguments.submit}' on this machine. "
+            f"'savesmith plugins' lists the ones there are."
+        )
+
+    saves = _saves_for_submission(arguments, system)
+    submission = contribute.prepare(plugin, saves, system)
+    for line in submission.explain():
+        print(line)
+
+    if not submission.proved:
+        print(
+            "\nNot sent. A plugin that cannot rebuild a save byte for byte is not a "
+            "contribution — it is a way to corrupt somebody else's save. Fix it and "
+            "try again; 'savesmith discover' can help."
+        )
+        return 1
+
+    print(f"\nWhat travels: {_quote(Path(plugin.source.name)) if plugin.source else 'the manifest'}"
+          f" — the description of the format, and nothing else.")
+    print("Your save files are never sent, and were not read for anything but the check above.")
+
+    if submission.leaks:
+        print(
+            "\nNot sent: the manifest carries something of yours, listed above. An "
+            "issue tracker is public and cannot be un-published. Take those out and "
+            "run this again."
+        )
+        return 1
+
+    manifest_file = Path(arguments.output) if arguments.output else Path(MANIFEST_NAME)
+    if submission.needs_attachment or arguments.output:
+        manifest_file.write_text(submission.manifest + "\n", encoding="utf-8")
+        print(f"\nThe manifest is written to {_quote(manifest_file)} — drag it into the form.")
+
+    print("\nThis opens the project's issue tracker with the form already filled in.")
+    print("Nothing is sent until you read it there and press the button yourself.")
+
+    if _agreed("Open it now?"):
+        import webbrowser
+
+        if webbrowser.open(submission.url()):
+            return 0
+        print("\nCould not open a browser. The link is:")
+    else:
+        print("\nNot opened. The link, when you want it:")
+    print(f"\n{submission.url()}")
+    return 0
+
+
+def _agreed(question: str) -> bool:
+    """A yes/no question, and 'no' whenever there is nobody to ask.
+
+    Piped into a script there is no one at the keyboard, and opening a browser
+    window at a machine nobody is watching helps nobody.
+    """
+    if not sys.stdin.isatty():
+        return False
+    try:
+        return input(f"\n{question} [y/N] ").strip().lower() in ("y", "yes", "д", "да")
+    except EOFError:
+        return False
+
+
+def _saves_for_submission(arguments: argparse.Namespace, system: SystemFacade) -> list[Path]:
+    """The saves a submitted plugin is proved against, from wherever it points."""
+    if not arguments.saves:
+        raise SaveSmithError(
+            "Say which saves to check the plugin against: --saves with the game, a "
+            "folder of saves, or one save file. A plugin nobody proved on real data "
+            "is a guess, and guesses are what corrupt saves."
+        )
+    target = Path(arguments.saves).expanduser()
+    if target.is_file():
+        return [target]
+    if target.is_dir():
+        found = sorted(path for path in target.iterdir() if path.is_file())
+        if found:
+            return found
+    look = look_at(target, system)
+    return [save.path for save in look.found.player_saves]
 
 
 def _cmd_verify(arguments: argparse.Namespace, system: SystemFacade) -> int:
@@ -1117,11 +1221,21 @@ def _parser() -> argparse.ArgumentParser:
     backups.add_argument("--restore", type=int, metavar="N", help="restore backup number N")
     backups.set_defaults(handler=_cmd_backups)
 
-    plugins = subparsers.add_parser("plugins", help="list, install, export or remove plugins")
+    plugins = subparsers.add_parser(
+        "plugins", help="list, install, export, remove or offer plugins"
+    )
     plugins.add_argument("--install", metavar="ARCHIVE")
     plugins.add_argument("--export", metavar="PLUGIN_ID")
     plugins.add_argument("--remove", metavar="PLUGIN_ID")
-    plugins.add_argument("--output", help="where to write an export")
+    plugins.add_argument(
+        "--submit",
+        metavar="PLUGIN_ID",
+        help="offer a plugin you made to everybody else (the save is never sent)",
+    )
+    plugins.add_argument(
+        "--saves", help="what to prove the plugin against when submitting: a game, folder or save"
+    )
+    plugins.add_argument("--output", help="where to write an export, or a manifest to attach")
     plugins.set_defaults(handler=_cmd_plugins)
 
     verify_command = subparsers.add_parser(
