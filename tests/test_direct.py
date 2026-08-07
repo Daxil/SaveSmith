@@ -61,6 +61,32 @@ class TestFindingANumber:
         sites = DirectSave.open(binary).search(12400)
         assert any(site.address == "0x40:int32-le" for site in sites)
 
+    def test_the_same_bytes_are_reported_once(self, binary: Path) -> None:
+        """int32-le and uint32-le at one offset are one candidate, not two.
+
+        On a real Elden Ring save this cut the list from 24 lines to 5.
+        """
+        sites = DirectSave.open(binary).search(12400)
+        addresses = [site.address for site in sites]
+        assert addresses.count("0x40:int32-le") == 1
+        assert "0x40:uint32-le" not in addresses
+        four_byte = next(site for site in sites if site.address == "0x40:int32-le")
+        assert "uint32-le" in four_byte.context, "the other reading is still mentioned"
+
+    def test_widths_that_differ_are_kept_apart(self, binary: Path) -> None:
+        """Four bytes and eight bytes are genuinely different readings."""
+        sites = {site.address for site in DirectSave.open(binary).search(12400)}
+        assert "0x40:int32-le" in sites
+        assert any("int16" in address or "int64" in address for address in sites)
+
+    def test_one_storage_type_at_a_time(self, binary: Path) -> None:
+        sites = DirectSave.open(binary).search(12400, encoding="uint32-le")
+        assert [site.address for site in sites] == ["0x40:uint32-le"]
+
+    def test_a_storage_type_nobody_has_heard_of(self, binary: Path) -> None:
+        with pytest.raises(AddressError):
+            DirectSave.open(binary).search(12400, encoding="quadword")
+
     def test_a_number_that_is_not_there(self, structured: Path) -> None:
         assert DirectSave.open(structured).search(777) == []
 

@@ -746,3 +746,18 @@ class TestSearchAndPoke:
     ) -> None:
         run("poke", str(save), "gold", "500", "--yes")
         assert "Risk for" not in capsys.readouterr().out
+
+    def test_search_narrows_to_one_storage_type(
+        self, home: FakeSystem, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        import struct
+
+        body = bytearray(b"\x00" * 128)
+        struct.pack_into("<i", body, 0x20, 12400)
+        path = tmp_path / "slot.bin"
+        path.write_bytes(bytes(body))
+
+        assert run("search", str(path), "12400", "--type", "uint32-le") == 0
+        out = capsys.readouterr().out
+        assert "0x20:uint32-le" in out
+        assert "int16" not in out

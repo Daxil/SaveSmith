@@ -121,11 +121,15 @@ class DirectSave:
 
     # -- finding ---------------------------------------------------------
 
-    def search(self, wanted: float) -> list[Site]:
-        """Everywhere this number appears in the decoded save."""
+    def search(self, wanted: float, *, encoding: str | None = None) -> list[Site]:
+        """Everywhere this number appears in the decoded save.
+
+        ``encoding`` narrows a binary search to one way of storing a number,
+        for when the player already knows which reading was the right one.
+        """
         if self.is_structured:
             return _search_structure(self.value, wanted)
-        return _search_bytes(_as_bytes(self.value), wanted)
+        return _search_bytes(_as_bytes(self.value), wanted, encoding=encoding)
 
     # -- changing --------------------------------------------------------
 
@@ -327,12 +331,40 @@ def _search_structure(root: Any, wanted: float) -> list[Site]:
     return found
 
 
-def _search_bytes(payload: bytes, wanted: float) -> list[Site]:
-    sites = compare.find_value(payload, wanted)
-    return [
-        Site(address=f"0x{site.offset:X}:{site.encoding}", value=site.value)
-        for site in sites[:_MAX_REPORTED]
-    ]
+def _search_bytes(payload: bytes, wanted: float, *, encoding: str | None = None) -> list[Site]:
+    """Offsets holding this number, with the same bytes reported once.
+
+    ``int32-le`` and ``uint32-le`` at one offset are not two candidates: they
+    are the same four bytes read two ways, and printing both doubles the list
+    the player has to work through for no information. Widths that genuinely
+    differ — four bytes against eight — stay separate, because they are
+    different readings of the file.
+    """
+    if encoding is not None and encoding not in compare.ENCODINGS:
+        raise AddressError(
+            f"There is no storage type called '{encoding}'. "
+            f"Expected one of: {', '.join(compare.ENCODINGS)}."
+        )
+
+    grouped: dict[tuple[int, int], list[compare.ValueSite]] = {}
+    for site in compare.find_value(payload, wanted):
+        if encoding is not None and site.encoding != encoding:
+            continue
+        width = struct.calcsize(compare.layout_for(site.encoding))
+        grouped.setdefault((site.offset, width), []).append(site)
+
+    sites: list[Site] = []
+    for (offset, _width), same_bytes in sorted(grouped.items())[:_MAX_REPORTED]:
+        primary = same_bytes[0]
+        others = [item.encoding for item in same_bytes[1:]]
+        sites.append(
+            Site(
+                address=f"0x{offset:X}:{primary.encoding}",
+                value=primary.value,
+                context=("also " + ", ".join(others)) if others else "",
+            )
+        )
+    return sites
 
 
 def _as_bytes(value: Any) -> bytes:

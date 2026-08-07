@@ -232,7 +232,7 @@ def _cmd_search(arguments: argparse.Namespace, system: SystemFacade) -> int:
     """
     target = _one_save(arguments, system)
     save = direct.DirectSave.open(target)
-    sites = save.search(arguments.value)
+    sites = save.search(arguments.value, encoding=arguments.type)
 
     print(f"{target.name}: {save.description}")
     if not sites:
@@ -747,6 +747,12 @@ def _parser() -> argparse.ArgumentParser:
     search.add_argument("file", help="a save file, or the game's install folder")
     search.add_argument("value", type=float, help="the number you can see in the game")
     search.add_argument("--slot", type=int, metavar="N", help="which save, if there are several")
+    search.add_argument(
+        "--type",
+        metavar="NAME",
+        help="only this way of storing a number, such as uint32-le "
+        "(binary saves only; " + ", ".join(compare.ENCODINGS) + ")",
+    )
     search.set_defaults(handler=_cmd_search)
 
     poke = subparsers.add_parser(
