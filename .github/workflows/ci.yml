@@ -44,6 +44,13 @@ jobs:
       - name: Types
         run: uv run mypy
 
+      # Type-check the Windows view from every runner. Typeshed marks modules
+      # like `resource` as POSIX-only, so a Mac can catch a Windows-only type
+      # error before the Windows job even starts — the same trick the tests use
+      # to exercise Windows behaviour from a Mac.
+      - name: Types as Windows
+        run: uv run mypy --platform win32
+
       # Tests marked native_windows / native_macos skip themselves off their
       # host, so one command covers every runner.
       - name: Tests

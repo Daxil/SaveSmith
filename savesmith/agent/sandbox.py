@@ -18,6 +18,7 @@ never sees the user's save folder, only the bytes handed to it.
 
 from __future__ import annotations
 
+import importlib
 import json
 import subprocess
 import sys
@@ -29,13 +30,23 @@ from typing import Any
 from savesmith.core.errors import SaveSmithError
 from savesmith.core.platform_ import Platform, current_platform
 
-try:
-    # POSIX only. Importing this at the top level would make the whole module —
-    # and everything that imports it — unusable on Windows, where the wall
-    # clock timeout does the job instead.
-    import resource
-except ImportError:  # pragma: no cover - Windows
-    resource = None  # type: ignore[assignment]
+
+def _load_resource() -> Any:
+    """The POSIX ``resource`` module, or ``None`` on Windows.
+
+    Imported this way rather than with a plain ``import`` for two reasons: the
+    module does not exist on Windows, so importing it at the top level would
+    make this file — and everything that imports it — unusable there; and a
+    type checker running as Windows sees no members on it, so there is nothing
+    to check against and ``Any`` is the honest type.
+    """
+    try:
+        return importlib.import_module("resource")
+    except ImportError:  # pragma: no cover - Windows
+        return None
+
+
+_resource: Any = _load_resource()
 
 DEFAULT_TIMEOUT = 10.0
 DEFAULT_MEMORY_MB = 512
@@ -134,7 +145,7 @@ def memory_limit_enforced() -> bool:
     memory ceiling. Saying so is better than implying a guarantee that is not
     there.
     """
-    return resource is not None and current_platform() is Platform.LINUX
+    return _resource is not None and current_platform() is Platform.LINUX
 
 
 def _apply_limits(limits: Limits) -> None:  # pragma: no cover - runs in the child
@@ -145,20 +156,20 @@ def _apply_limits(limits: Limits) -> None:  # pragma: no cover - runs in the chi
     codec at all. Whatever cannot be set is covered by the wall-clock timeout,
     which every platform honours.
     """
-    if resource is None:  # pragma: no cover - Windows never reaches here
+    if _resource is None:  # pragma: no cover - Windows never reaches here
         return
     memory = limits.memory_mb * 1024 * 1024
     file_size = limits.file_size_mb * 1024 * 1024
     cpu = max(1, int(limits.timeout_seconds) + 1)
 
     for which, value in (
-        (resource.RLIMIT_CPU, (cpu, cpu)),
-        (resource.RLIMIT_FSIZE, (file_size, file_size)),
-        (resource.RLIMIT_CORE, (0, 0)),
-        (resource.RLIMIT_AS, (memory, memory)),
+        (_resource.RLIMIT_CPU, (cpu, cpu)),
+        (_resource.RLIMIT_FSIZE, (file_size, file_size)),
+        (_resource.RLIMIT_CORE, (0, 0)),
+        (_resource.RLIMIT_AS, (memory, memory)),
     ):
         try:
-            resource.setrlimit(which, value)
+            _resource.setrlimit(which, value)
         except (ValueError, OSError):
             continue
 
