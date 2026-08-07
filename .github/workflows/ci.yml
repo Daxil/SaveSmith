@@ -108,6 +108,12 @@ jobs:
     if: github.event_name != 'pull_request'
     timeout-minutes: 5
     steps:
+      # Set, and the right thing. "Not empty" is a weak question: the public
+      # half of the pair sits in the same folder under a name one character
+      # longer, and pasting that one produces a secret that passes every check
+      # until a tagged build fails at the very end, after three app builds.
+      # Nothing here prints the value; only which kind of key it turned out to
+      # be.
       - name: The updater key is where a release will look for it
         env:
           KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -116,9 +122,33 @@ jobs:
             echo "::warning title=No updater key::TAURI_SIGNING_PRIVATE_KEY is not set." \
                  "Tagging a release now would fail on purpose, because the app it built" \
                  "could never update itself. Settings → Secrets and variables → Actions."
-          else
-            echo "TAURI_SIGNING_PRIVATE_KEY is set. A release can be published."
+            exit 0
           fi
+
+          kind=$(printf '%s' "$KEY" | base64 -d 2>/dev/null | head -c 200 | tr -d '\0')
+          # A key cut short still decodes to its own comment line, so the
+          # length is checked too: the real thing is around 350 characters.
+          case "$kind" in
+            *"rsign encrypted secret key"*)
+              if [ "${#KEY}" -lt 200 ]; then
+                echo "::warning title=Updater key looks cut short::The secret starts like a" \
+                     "signing key but is only ${#KEY} characters; the whole file is longer." \
+                     "Copy it all: pbcopy < ~/.tauri/savesmith-updater.key"
+                exit 0
+              fi
+              echo "TAURI_SIGNING_PRIVATE_KEY holds a signing key. A release can be published."
+              ;;
+            *"minisign public key"*)
+              echo "::warning title=That is the public half::TAURI_SIGNING_PRIVATE_KEY holds" \
+                   "the *public* key — the file ending in .pub. Signing needs the other one," \
+                   "~/.tauri/savesmith-updater.key, and a tagged build will fail without it."
+              ;;
+            *)
+              echo "::warning title=Unreadable updater key::TAURI_SIGNING_PRIVATE_KEY is set" \
+                   "but is not a key Tauri can sign with — most likely pasted partially." \
+                   "Copy the whole file: pbcopy < ~/.tauri/savesmith-updater.key"
+              ;;
+          esac
 
   # The window, and the shell around it. Kept apart from `test` so that a
   # broken Rust toolchain cannot hide a failing core test, and so the core
@@ -216,7 +246,18 @@ jobs:
                  "would ship an app that can never update itself. Add the secret."
             exit 1
           fi
-          npx tauri build --config src-tauri/tauri.release.conf.json
+
+          # The reason goes into the run summary, not only into the log.
+          # Downloading a workflow log needs admin rights on the repository, so
+          # for anybody else — a contributor, or the maintainer on a phone — a
+          # failed release is otherwise a red cross with nothing behind it.
+          set -o pipefail
+          if ! npx tauri build --config src-tauri/tauri.release.conf.json 2>&1 \
+               | tee "$RUNNER_TEMP/tauri.log"; then
+            echo "::error title=Не собралось окно::$(tail -n 25 "$RUNNER_TEMP/tauri.log" \
+              | tr '\n' '|' | cut -c1-900)"
+            exit 1
+          fi
         shell: bash
 
       - uses: actions/upload-artifact@v4
