@@ -21,10 +21,10 @@ from typing import Any
 from savesmith.agent.discovery import discover as run_discovery
 from savesmith.agent.writer import DEFAULT_MODEL
 from savesmith.core import checksum as checksum_module
-from savesmith.core import compare, detect, diagnostics, direct, playerprefs
+from savesmith.core import compare, detect, diagnostics, direct, library, playerprefs
 from savesmith.core.backup import BackupStore
 from savesmith.core.console import use_utf8
-from savesmith.core.discover import Discovery, GameFolder, examine, find_saves
+from savesmith.core.discover import Discovery, GameFolder, Look, examine, look_at
 from savesmith.core.errors import SaveSmithError
 from savesmith.core.paths import RealSystem, SystemFacade
 from savesmith.core.plugin import Plugin
@@ -33,7 +33,7 @@ from savesmith.core.risk import Acknowledgement, Assessment, RiskDatabase, asses
 from savesmith.core.session import EditSession
 from savesmith.core.steam import SteamInstall
 from savesmith.core.store import PluginStore
-from savesmith.core.wine import machine_for, scan_prefixes
+from savesmith.core.wine import scan_prefixes
 
 PROGRAM = "savesmith"
 
@@ -102,14 +102,49 @@ def _cmd_scan(arguments: argparse.Namespace, system: SystemFacade) -> int:
     return 0
 
 
+def _cmd_games(arguments: argparse.Namespace, system: SystemFacade) -> int:
+    """Every game on this machine, wherever it is installed.
+
+    Steam on the host, Steam inside each Wine bottle, the bottles themselves,
+    and Mac applications built by a game engine. The path printed beside each
+    one is exactly what the other commands take.
+    """
+    found = library.scan(system)
+    if not found.games:
+        print(
+            "No games found. SaveSmith looks at Steam, at Wine bottles and at "
+            "Mac applications; anything installed elsewhere still works if you "
+            "point at it:\n  savesmith find \"<the game's folder, .exe or .app>\""
+        )
+        for problem in found.problems:
+            print(f"\n  {problem}")
+        return 0
+
+    database = RiskDatabase.bundled()
+    source = None
+    for game in found.sorted():
+        if game.source != source:
+            source = game.source
+            print(f"\n{source}:")
+        tier = ""
+        if game.steam_appid is not None:
+            tier = f"[{_assess_game(game.steam_appid, game.path, database).tier.value}] "
+        print(f"  {tier}{game.name}")
+        if arguments.verbose or not tier:
+            print(f"      {_quote(game.path)}")
+
+    print("\nOpen one with:\n  savesmith find \"<the path above>\"")
+    for problem in found.problems:
+        print(f"\n  {problem}")
+    return 0
+
+
 def _cmd_find(arguments: argparse.Namespace, system: SystemFacade) -> int:
-    """Point at a game folder, get its saves."""
-    folder = Path(arguments.folder).expanduser()
-    system, note = machine_for(folder, system)
-    if note:
+    """Point at a game — its folder, its .exe or its .app — and get its saves."""
+    look = look_at(Path(arguments.folder).expanduser(), system)
+    for note in look.notes:
         print(f"({note})")
-    game = examine(folder)
-    for line in find_saves(game, system).explain():
+    for line in look.found.explain(verbose=arguments.verbose):
         print(line)
     return 0
 
@@ -348,35 +383,32 @@ def _one_save(arguments: argparse.Namespace, system: SystemFacade) -> Path:
 def _one_save_and_game(
     arguments: argparse.Namespace, system: SystemFacade
 ) -> tuple[Path, GameFolder | None]:
-    """A save file, whether the user named one or pointed at a game folder."""
-    target = Path(arguments.file).expanduser()
-    if not target.is_dir():
-        return target, None
-    # A Windows game inside a bottle keeps its saves in the bottle's AppData,
-    # not the Mac's. Asking the host would find a real, existing, empty folder.
-    system, note = machine_for(target, system)
-    if note:
+    """A save file, whether the user named one or pointed at a game."""
+    look = look_at(Path(arguments.file).expanduser(), system)
+    if look.target.save_file is not None:
+        return look.target.save_file, None
+    for note in look.notes:
         print(f"({note})")
-    game = examine(target)
-    found = find_saves(game, system)
-    if not found.saves:
+    game, found = look.game, look.found
+    saves = found.player_saves
+    if not saves:
         raise SaveSmithError(_nothing_editable(game, found))
     slot = arguments.slot
-    if slot is None and len(found.saves) > 1:
+    if slot is None and len(saves) > 1:
         listing = "\n".join(
             f"  {index}. {save.path.name}  ({save.format}, {save.size} bytes)"
-            for index, save in enumerate(found.saves[:20], start=1)
+            for index, save in enumerate(saves[:20], start=1)
         )
         raise SaveSmithError(
-            f"{game.title} has {len(found.saves)} save files:\n{listing}\n\n"
+            f"{game.title} has {len(saves)} save files:\n{listing}\n\n"
             f"Choose one with --slot, or name the file directly."
         )
     index = (slot or 1) - 1
-    if not 0 <= index < len(found.saves):
+    if not 0 <= index < len(saves):
         raise SaveSmithError(
-            f"There is no save {slot} here; {game.title} has {len(found.saves)}."
+            f"There is no save {slot} here; {game.title} has {len(saves)}."
         )
-    return found.saves[index].path, game
+    return saves[index].path, game
 
 
 def _quote(path: Path) -> str:
@@ -571,17 +603,20 @@ _MAX_CANDIDATES = 12
 
 def _session(arguments: argparse.Namespace, system: SystemFacade) -> EditSession:
     store = PluginStore.for_system(system)
-    target = Path(arguments.file).expanduser()
+    look = look_at(Path(arguments.file).expanduser(), system)
 
     game = None
-    if target.is_dir():
-        # Pointing at the game's folder is the intended way in: the person
-        # editing a save knows where the game is installed, not where it
-        # decided to hide its saves.
-        game, target = _save_in_folder(target, system, store, slot=arguments.slot)
+    if look.target.save_file is not None:
+        target = look.target.save_file
+        if arguments.game_folder:
+            game = look_at(Path(arguments.game_folder).expanduser(), system).game
+    else:
+        # Pointing at the game is the intended way in: the person editing a
+        # save knows where the game is, not where it decided to hide its saves.
+        for note in look.notes:
+            print(f"({note})")
+        game, target = _save_in_folder(look, store, slot=arguments.slot)
         print(f"{game.title}: {target.name}\n")
-    elif arguments.game_folder:
-        game = examine(Path(arguments.game_folder).expanduser())
 
     raw = _read(target)
 
@@ -608,16 +643,15 @@ def _session(arguments: argparse.Namespace, system: SystemFacade) -> EditSession
 
 
 def _save_in_folder(
-    folder: Path, system: SystemFacade, store: PluginStore, *, slot: int | None
+    look: Look, store: PluginStore, *, slot: int | None
 ) -> tuple[GameFolder, Path]:
-    """Turn a game folder into the one save file to edit.
+    """Turn a game into the one save file to edit.
 
     Refuses to guess between several editable saves. Picking the wrong slot
     overwrites progress the player wanted to keep, and no amount of "probably
     the newest one" reasoning is worth that.
     """
-    game = examine(folder)
-    found = find_saves(game, system)
+    game, found = look.game, look.found
     editable = _editable_saves(found, store)
 
     if not editable:
@@ -646,7 +680,9 @@ def _save_in_folder(
 def _editable_saves(discovery: Discovery, store: PluginStore) -> list[tuple[Path, Plugin]]:
     """The saves in a folder that some plugin can actually open."""
     editable: list[tuple[Path, Plugin]] = []
-    for save in discovery.saves[:_MAX_CANDIDATES]:
+    # The player's own saves only. A folder of sixty-two rolling backups would
+    # otherwise fill the budget before the save itself was ever opened.
+    for save in discovery.player_saves[:_MAX_CANDIDATES]:
         try:
             raw = save.path.read_bytes()
         except OSError:
@@ -722,8 +758,13 @@ def _parser() -> argparse.ArgumentParser:
     scan = subparsers.add_parser("scan", help="installed games and their risk tier")
     scan.set_defaults(handler=_cmd_scan)
 
-    find = subparsers.add_parser("find", help="find the saves of a game, given its folder")
-    find.add_argument("folder")
+    games = subparsers.add_parser("games", help="every game found on this machine")
+    games.set_defaults(handler=_cmd_games)
+
+    find = subparsers.add_parser(
+        "find", help="find the saves of a game, given its folder, .exe or .app"
+    )
+    find.add_argument("folder", metavar="game")
     find.set_defaults(handler=_cmd_find)
 
     identify = subparsers.add_parser("identify", help="work out the format of one save file")

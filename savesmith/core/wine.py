@@ -53,7 +53,7 @@ class BottleKind(StrEnum):
 
 
 # Wineskin-style wrappers hide the bottle here inside the application bundle.
-_WRAPPER_SUFFIX = ("Contents", "SharedSupport", "prefix")
+WRAPPER_SUFFIX = ("Contents", "SharedSupport", "prefix")
 
 
 @dataclass(frozen=True)
@@ -140,7 +140,7 @@ def find_app_wrappers(folders: Iterable[Path]) -> Iterator[Path]:
         except OSError:
             continue
         for bundle in bundles:
-            candidate = Path(bundle).joinpath(*_WRAPPER_SUFFIX)
+            candidate = Path(bundle).joinpath(*WRAPPER_SUFFIX)
             if is_prefix(candidate):
                 yield candidate
 
@@ -150,7 +150,13 @@ def containing_prefix(folder: Path) -> Path | None:
 
     Cheap and local: no scanning, no guessing. A path with ``drive_c`` above it
     is inside a Windows filesystem, and that is exactly the fact that matters.
+
+    The bottle itself counts. Pointing at a Wineskin wrapper is pointing at a
+    Windows machine, and answering "not in a bottle" for the bottle's own root
+    would send every later lookup to the Mac's folders instead.
     """
+    if is_prefix(folder):
+        return folder
     for parent in [folder, *folder.parents]:
         if parent.name == "drive_c" and (parent.parent / "drive_c").is_dir():
             return parent.parent
@@ -264,7 +270,7 @@ def _describe(path: Path) -> WinePrefix:
     return WinePrefix(
         path=path,
         kind=_kind_of(path),
-        name=_name_of(path),
+        name=name_of(path),
         users=tuple(_profiles_in(path)),
     )
 
@@ -291,13 +297,13 @@ def _kind_of(path: Path) -> BottleKind:
 
 def _bundle_of(path: Path) -> Path | None:
     """The .app this bottle is buried in, if any."""
-    if path.parts[-len(_WRAPPER_SUFFIX) :] != _WRAPPER_SUFFIX:
+    if path.parts[-len(WRAPPER_SUFFIX) :] != WRAPPER_SUFFIX:
         return None
-    bundle = path.parents[len(_WRAPPER_SUFFIX) - 1]
+    bundle = path.parents[len(WRAPPER_SUFFIX) - 1]
     return bundle if bundle.name.endswith(".app") else None
 
 
-def _name_of(path: Path) -> str:
+def name_of(path: Path) -> str:
     """A name a person recognises.
 
     Whisky names bottles with a UUID and keeps the real name in a plist; using

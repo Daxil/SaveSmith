@@ -160,6 +160,21 @@ class Report:
         best = self.best
         return best is not None and best.structured and best.round_trip.exact_bytes
 
+    @property
+    def openable(self) -> bool:
+        """Every layer comes off and goes back on, even if no fields appear.
+
+        The distinction matters to the user, and conflating it with
+        :attr:`solved` is how SaveSmith came to list an Elden Ring save under
+        "format not recognised". Its format is recognised exactly — BND4, then
+        an encrypted FromSoftware slot — and it rebuilds byte for byte. What is
+        missing is a map of what the bytes mean, which is what ``search`` and
+        ``poke`` exist for. "We know this file and cannot show you fields" is a
+        different sentence from "we have no idea what this is".
+        """
+        best = self.best
+        return best is not None and best.round_trip.exact_bytes
+
     def explain(self) -> list[str]:
         """Lines for the progress log, so the user sees what is happening."""
         lines = [f"File: {self.look.summary()}", f"Combinations tried: {self.attempted}"]

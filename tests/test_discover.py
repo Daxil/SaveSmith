@@ -4,12 +4,21 @@ from __future__ import annotations
 
 import gzip
 import json
+import os
 import plistlib
 from pathlib import Path
 
 import pytest
 
-from savesmith.core.discover import Engine, examine, find_saves, save_locations
+from savesmith.core import detect
+from savesmith.core.discover import (
+    Engine,
+    Kind,
+    classify,
+    examine,
+    find_saves,
+    save_locations,
+)
 from savesmith.core.paths import FakeSystem, KnownFolder, RegistryHive
 from savesmith.core.platform_ import Platform
 from savesmith.core.playerprefs import REG_DWORD
@@ -348,3 +357,248 @@ class TestUnityPlayerPrefs:
         found = find_saves(examine(self._unity_game(tmp_path)), system)
         assert found.prefs is None
         assert "No save files found" in " ".join(found.explain())
+
+
+class TestPointingAtAFolderOfSaves:
+    """The bug this class exists for.
+
+    Somebody pointed at the folder their Elden Ring saves were sitting in and
+    was told "No save files found". The folder was scanned as though it were an
+    install folder — thousands of files, of which none is a save — so only
+    names containing "save" were read, and ``ER0000.sl2`` is not one.
+    """
+
+    def test_saves_are_found_even_when_nothing_is_called_save(
+        self, tmp_path: Path, windows: FakeSystem
+    ) -> None:
+        folder = tmp_path / "76561197960271872"
+        folder.mkdir()
+        (folder / "ER0000.sl2").write_bytes(SAVE_BYTES)
+        (folder / "ER0000.sl2.bak").write_bytes(SAVE_BYTES)
+
+        found = find_saves(examine(folder), windows)
+
+        assert {save.path.name for save in found.saves} == {"ER0000.sl2", "ER0000.sl2.bak"}
+
+    def test_an_install_folder_is_still_read_strictly(
+        self, tmp_path: Path, windows: FakeSystem
+    ) -> None:
+        """The narrow rule has to stay where it earns its keep."""
+        game = tmp_path / "Coin Quest"
+        game.mkdir()
+        (game / "CoinQuest.exe").write_bytes(b"MZ\x90\x00")
+        (game / "UnityPlayer.dll").write_bytes(b"\x00" * 64)
+        (game / "settings.dat").write_bytes(SAVE_BYTES)
+        (game / "savegame.dat").write_bytes(SAVE_BYTES)
+
+        found = find_saves(examine(game), windows)
+
+        names = {save.path.name for save in found.saves}
+        assert "savegame.dat" in names
+        assert "settings.dat" not in names
+
+
+class TestNamesThatDoNotMatchAsStrings:
+    """A game installed as one spelling and saving under another.
+
+    ``ELDEN RING`` on disk, ``EldenRing`` in AppData, ``eldenring.exe`` in
+    between. Joining the install name onto AppData builds a path that is not
+    there, so the folders that exist are matched instead.
+    """
+
+    def test_appdata_is_matched_ignoring_case_and_spaces(
+        self, tmp_path: Path, windows: FakeSystem
+    ) -> None:
+        game = tmp_path / "ELDEN RING"
+        game.mkdir()
+        (game / "eldenring.exe").write_bytes(b"MZ\x90\x00")
+
+        appdata = windows.known_folder(KnownFolder.ROAMING_APPDATA)
+        assert appdata is not None
+        saves = appdata / "EldenRing" / "76561"
+        saves.mkdir(parents=True)
+        (saves / "ER0000.sl2").write_bytes(SAVE_BYTES)
+
+        found = find_saves(examine(game), windows)
+
+        assert [save.path.name for save in found.saves] == ["ER0000.sl2"]
+
+    def test_the_executable_name_is_used_when_the_folder_lies(
+        self, tmp_path: Path, windows: FakeSystem
+    ) -> None:
+        """Steam's folder can be named anything; the exe rarely is."""
+        game = tmp_path / "Game"
+        game.mkdir()
+
+        saved_games = windows.known_folder(KnownFolder.SAVED_GAMES)
+        assert saved_games is not None
+        saves = saved_games / "CoinQuest"
+        saves.mkdir(parents=True)
+        (saves / "slot1.dat").write_bytes(SAVE_BYTES)
+
+        found = find_saves(examine(game, "CoinQuest"), windows)
+
+        assert [save.path.name for save in found.saves] == ["slot1.dat"]
+
+
+class TestWhatCountsAsRecognised:
+    """Found, and then told the user nothing was found.
+
+    An Elden Ring save is BND4 wrapping an encrypted FromSoftware slot. Every
+    layer comes off and goes back on byte for byte — the file is understood —
+    but no fields come out of it, and the screen reported that as "format not
+    recognised" right under the words "nothing found". Three states, not two.
+    """
+
+    def opaque_but_exact(self, tmp_path: Path) -> Path:
+        """A file a known step opens, whose payload stays bytes."""
+        save = tmp_path / "ER0000.sl2"
+        save.write_bytes(gzip.compress(bytes(range(256)) * 8, mtime=0))
+        return save
+
+    def test_a_known_wrapper_around_opaque_bytes_is_openable(self, tmp_path: Path) -> None:
+        report = detect.identify(self.opaque_but_exact(tmp_path).read_bytes())
+
+        assert report.openable, "the format is understood and rebuilds exactly"
+        assert not report.solved, "but no fields came out of it"
+
+    def test_an_unknown_file_is_neither(self, tmp_path: Path) -> None:
+        report = detect.identify(b"\x8b\x1d\xf0\x03" * 64)
+
+        assert not report.openable
+        assert not report.solved
+
+    def test_the_scan_never_calls_what_it_found_nothing(
+        self, tmp_path: Path, windows: FakeSystem
+    ) -> None:
+        """The invariant the screen depends on."""
+        folder = tmp_path / "76561197960271872"
+        folder.mkdir()
+        self.opaque_but_exact(folder)
+
+        found = find_saves(examine(folder), windows)
+
+        assert found.saves, "the file is there and was read"
+        assert found.found_anything
+        assert "No save files found" not in " ".join(found.explain())
+        assert [save.path.name for save in found.openable] == ["ER0000.sl2"]
+
+
+class TestOnlyTheSavesAreShown:
+    """A folder of saves is mostly not saves.
+
+    The Invincible keeps sixty-two rolling backups, four settings files and one
+    save the player made. Handing somebody all sixty-seven and asking them to
+    pick is not thoroughness — they opened SaveSmith precisely because they do
+    not know what their save file is called.
+    """
+
+    def a_folder_like_the_invincible(self, tmp_path: Path) -> Path:
+        folder = tmp_path / "SaveGames"
+        folder.mkdir()
+        (folder / "SaveSlot_0.sav").write_bytes(SAVE_BYTES)
+        for index in range(1, 63):
+            (folder / f"SaveSlot_0_backup_{index}.sav").write_bytes(SAVE_BYTES)
+        (folder / "MenuSettingsSave.sav").write_bytes(SAVE_BYTES)
+        (folder / "CondorSettings.sav").write_bytes(SAVE_BYTES)
+        (folder / "GameUserSettings.ini").write_bytes(SAVE_BYTES)
+        return folder
+
+    def test_the_answer_is_the_one_save(self, tmp_path: Path, windows: FakeSystem) -> None:
+        found = find_saves(examine(self.a_folder_like_the_invincible(tmp_path)), windows)
+
+        assert [save.path.name for save in found.player_saves] == ["SaveSlot_0.sav"]
+        assert found.best_save is not None
+        assert found.best_save.path.name == "SaveSlot_0.sav"
+
+    def test_the_rest_is_counted_not_listed(
+        self, tmp_path: Path, windows: FakeSystem
+    ) -> None:
+        found = find_saves(examine(self.a_folder_like_the_invincible(tmp_path)), windows)
+
+        assert found.aside[Kind.BACKUP] == 62
+        # The .ini never even became a candidate — its extension disqualified
+        # it during the walk, before anything was read.
+        assert found.aside[Kind.SETTINGS] == 2
+
+        printed = "\n".join(found.explain())
+        assert "SaveSlot_0.sav" in printed
+        assert "backup_7" not in printed, "the game's own copies are not the answer"
+        assert "62 backups" in printed
+
+    def test_an_elden_ring_folder_answers_with_one_file(
+        self, tmp_path: Path, windows: FakeSystem
+    ) -> None:
+        folder = tmp_path / "76561197960271872"
+        folder.mkdir()
+        (folder / "ER0000.sl2").write_bytes(gzip.compress(bytes(range(256)) * 8, mtime=0))
+        (folder / "ER0000.sl2.bak").write_bytes(gzip.compress(bytes(range(256)) * 8, mtime=0))
+
+        found = find_saves(examine(folder), windows)
+
+        assert [save.path.name for save in found.player_saves] == ["ER0000.sl2"]
+
+
+class TestClassifying:
+    @pytest.mark.parametrize(
+        ("name", "expected"),
+        [
+            ("SaveSlot_0.sav", Kind.SAVE),
+            ("ER0000.sl2", Kind.SAVE),
+            ("autosave1.dat", Kind.SAVE),
+            ("SaveSlot_0_backup_7.sav", Kind.BACKUP),
+            ("ER0000.sl2.bak", Kind.BACKUP),
+            ("save_old.dat", Kind.BACKUP),
+            # A game will happily put "Save" in the name of a settings file.
+            ("MenuSettingsSave.sav", Kind.SETTINGS),
+            ("GameUserSettings.ini", Kind.SETTINGS),
+            ("DeviceProfiles.ini", Kind.SETTINGS),
+            ("keybindings.dat", Kind.SETTINGS),
+        ],
+    )
+    def test_names_the_games_actually_use(self, name: str, expected: Kind) -> None:
+        assert classify(name, openable=True, size=4096) is expected
+
+    def test_a_file_with_nothing_in_it_is_not_a_save(self) -> None:
+        """Two empty bytes will cheerfully "decode" as base64 otherwise."""
+        assert classify("mystery.dat", openable=True, size=2) is Kind.OTHER
+
+
+class TestSlotsStayPut:
+    """``--slot 2`` decides which save gets overwritten.
+
+    It must mean the same file tomorrow as today, so the listing is ordered by
+    name — which is also how a game numbers its own slots — and never by date.
+    """
+
+    def test_listed_by_name_not_by_date(self, tmp_path: Path, windows: FakeSystem) -> None:
+        folder = tmp_path / "saves"
+        folder.mkdir()
+        for name in ("file2.dat", "file1.dat", "file3.dat"):
+            (folder / name).write_bytes(SAVE_BYTES)
+        # file1 written first, so by date it would come last.
+        os.utime(folder / "file1.dat", (1, 1))
+        os.utime(folder / "file3.dat", (500, 500))
+
+        found = find_saves(examine(folder), windows)
+
+        assert [save.path.name for save in found.player_saves] == [
+            "file1.dat",
+            "file2.dat",
+            "file3.dat",
+        ]
+
+    def test_the_single_best_answer_is_the_newest(
+        self, tmp_path: Path, windows: FakeSystem
+    ) -> None:
+        """For "just open my save", recency is the better guess."""
+        folder = tmp_path / "saves"
+        folder.mkdir()
+        for name in ("file1.dat", "file2.dat"):
+            (folder / name).write_bytes(SAVE_BYTES)
+        os.utime(folder / "file1.dat", (1, 1))
+        os.utime(folder / "file2.dat", (999_000, 999_000))
+
+        best = find_saves(examine(folder), windows).best_save
+
+        assert best is not None and best.path.name == "file2.dat"

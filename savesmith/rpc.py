@@ -37,10 +37,10 @@ from typing import IO, Any
 
 from savesmith.agent.discovery import discover as run_discovery
 from savesmith.core import checksum as checksum_module
-from savesmith.core import detect, diagnostics, direct, playerprefs
+from savesmith.core import detect, diagnostics, direct, library, playerprefs
 from savesmith.core.backup import BackupStore
 from savesmith.core.console import use_utf8
-from savesmith.core.discover import examine, find_saves
+from savesmith.core.discover import examine, look_at
 from savesmith.core.errors import SaveSmithError
 from savesmith.core.paths import RealSystem, SystemFacade
 from savesmith.core.plugin import Plugin
@@ -49,7 +49,7 @@ from savesmith.core.risk import Acknowledgement, RiskDatabase, assess
 from savesmith.core.session import EditSession
 from savesmith.core.steam import SteamInstall
 from savesmith.core.store import PluginStore
-from savesmith.core.wine import machine_for, scan_prefixes
+from savesmith.core.wine import scan_prefixes
 
 PROTOCOL = "2.0"
 
@@ -154,10 +154,12 @@ class Server:
             "ping": self._ping,
             "doctor": self._doctor,
             "scan": self._scan,
+            "games": self._games,
             "find_saves": self._find_saves,
             "identify": self._identify,
             "checksums": self._checksums,
             "discover": self._discover,
+            "fields": self._fields,
             "search": self._search,
             "poke": self._poke,
             "prefs.read": self._prefs_read,
@@ -207,14 +209,50 @@ class Server:
         ]
         return {"games": games, "bottles": bottles}
 
+    def _games(self, _params: dict[str, Any], _notify: Notify) -> dict[str, Any]:
+        """Every game on this machine, for the interface to offer as a list.
+
+        Cheap enough to call on start-up: it reads Steam's manifests and looks
+        at the shape of a few folders, and never opens a save.
+        """
+        found = library.scan(self.system)
+        database = RiskDatabase.bundled()
+        games = []
+        for game in found.sorted():
+            tier = None
+            if game.steam_appid is not None:
+                tier = assess(
+                    database=database,
+                    appid=game.steam_appid,
+                    anticheat=(),
+                    anticheat_scanned=False,
+                    plugin=None,
+                    steam_cloud=False,
+                ).tier.value
+            games.append(
+                {
+                    "name": game.name,
+                    "path": str(game.path),
+                    "source": game.source,
+                    "bottle": game.bottle,
+                    "steam_appid": game.steam_appid,
+                    "installed": game.installed,
+                    "risk_tier": tier,
+                }
+            )
+        return {"games": games, "problems": found.problems}
+
     def _find_saves(self, params: dict[str, Any], _notify: Notify) -> dict[str, Any]:
-        folder = Path(_require(params, "folder"))
-        # A game inside a Wine bottle keeps its saves inside that bottle.
-        system, bottle = machine_for(folder, self.system)
-        game = examine(folder)
-        found = find_saves(game, system)
+        # Whatever the user pointed at: the folder, the .exe, the .app, or a
+        # Wineskin wrapper with a whole bottle inside.
+        look = look_at(Path(_require(params, "folder")), self.system)
+        game, found = look.game, look.found
+        described = self._plugins_for(found)
         return {
-            "bottle": bottle,
+            # The bottle's name, not a sentence: the window says it in its
+            # own language rather than reprinting an English note.
+            "bottle": look.bottle,
+            "folder": str(look.target.folder),
             "game": {
                 "title": game.title,
                 "engine": game.engine.value,
@@ -234,14 +272,79 @@ class Server:
                 if found.prefs is not None
                 else None
             ),
+            "aside": {kind.value: count for kind, count in found.aside.items()},
             "saves": [
                 {
                     "path": str(save.path),
                     "format": save.format,
                     "recognised": save.recognised,
+                    # save / backup / settings / other. The window shows the
+                    # saves and counts the rest; a person looking for their
+                    # save does not want sixty-two of the game's own backups.
+                    "kind": save.kind.value,
+                    # The format is understood and rebuilds exactly, but its
+                    # fields are unmapped. Editable by address, not by name.
+                    "openable": save.openable,
+                    # The plugin that reads this file by name, if one does.
+                    # This and not `recognised` is what decides whether the
+                    # window can show named fields: the generic ladder says
+                    # nothing about Elden Ring, and a plugin says everything.
+                    "plugin": described.get(str(save.path)),
+                    # When a game is installed in two places — two bottles, a
+                    # reinstall — the only honest way to tell which save is the
+                    # one being played is when it was last written.
+                    "modified": save.modified,
                     "size": save.size,
                 }
                 for save in found.saves
+            ],
+        }
+
+    def _plugins_for(self, found: Any) -> dict[str, str]:
+        """Which of the player's saves a plugin can read by name.
+
+        Only the player's own saves are tried: matching means decoding, and
+        decoding sixty-two of a game's rolling backups to learn what we already
+        know about the first one is a great deal of work for no new answer.
+        """
+        store = PluginStore.for_system(self.system)
+        repository = PluginRepository(store.root)
+        matched: dict[str, str] = {}
+        for save in found.player_saves:
+            try:
+                raw = save.path.read_bytes()
+            except OSError:
+                continue
+            plugins = repository.match(raw) or bundled().match(raw)
+            if plugins:
+                matched[str(save.path)] = plugins[0].id
+        return matched
+
+    def _fields(self, params: dict[str, Any], _notify: Notify) -> dict[str, Any]:
+        """Every value in a save, named the way the game named it.
+
+        No plugin involved: a GVAS file carries ``ObjectiveTime`` inside it and
+        RPG Maker carries ``party._gold``. Listing those is the difference
+        between showing somebody their save and asking them to guess a number.
+
+        A save that decoded to bytes has no names in it, so the list is empty
+        and the interface falls back to searching by value. Inventing labels
+        for bytes would be worse than saying there are none.
+        """
+        save = direct.DirectSave.open(Path(_require(params, "path")))
+        return {
+            "format": save.description,
+            "structured": save.is_structured,
+            "fields": [
+                {
+                    "address": leaf.address,
+                    "name": leaf.name,
+                    "group": leaf.group,
+                    "value": leaf.value,
+                    "kind": leaf.kind,
+                    "editable": leaf.editable,
+                }
+                for leaf in save.fields()
             ],
         }
 
@@ -432,7 +535,7 @@ class Server:
         anticheat: tuple[str, ...] = ()
         scanned = False
         if params.get("game_folder"):
-            game = examine(Path(params["game_folder"]))
+            game = look_at(Path(params["game_folder"]), self.system).game
             anticheat, scanned = game.anticheat, True
 
         session = EditSession.open(
@@ -445,14 +548,14 @@ class Server:
         self._counter += 1
         key = f"s{self._counter}"
         self.sessions[key] = session
-        return {"session": key, **self._state(session, params.get("language", "en"))}
+        return self._state(key, session, params.get("language", "en"))
 
     def _set(self, params: dict[str, Any], _notify: Notify) -> dict[str, Any]:
         session = self._session(params)
         change = session.set(_require(params, "field"), params.get("value"))
         return {
             "change": {"field": change.address, "before": change.before, "after": change.after},
-            **self._state(session, params.get("language", "en")),
+            **self._state(_require(params, "session"), session, params.get("language", "en")),
         }
 
     def _acknowledge(self, params: dict[str, Any], _notify: Notify) -> dict[str, Any]:
@@ -467,13 +570,13 @@ class Server:
                 {"known": sorted(known)},
             )
         session.acknowledge(*(known[name] for name in items))
-        return self._state(session, params.get("language", "en"))
+        return self._state(_require(params, "session"), session, params.get("language", "en"))
 
     def _confirm_cloud(self, params: dict[str, Any], _notify: Notify) -> dict[str, Any]:
         session = self._session(params)
         steps = [int(step) for step in (params.get("steps") or [1, 2, 3])]
         session.confirm_cloud_steps(*steps)
-        return self._state(session, params.get("language", "en"))
+        return self._state(_require(params, "session"), session, params.get("language", "en"))
 
     def _write(self, params: dict[str, Any], _notify: Notify) -> dict[str, Any]:
         session = self._session(params)
@@ -481,7 +584,7 @@ class Server:
         return {
             "written": True,
             "backup": {"folder": str(backup.folder), "label": backup.label},
-            **self._state(session, params.get("language", "en")),
+            **self._state(_require(params, "session"), session, params.get("language", "en")),
         }
 
     def _close(self, params: dict[str, Any], _notify: Notify) -> dict[str, Any]:
@@ -567,9 +670,16 @@ class Server:
             )
         return matches[0]
 
-    def _state(self, session: EditSession, language: str) -> dict[str, Any]:
-        """Everything the interface needs to draw the screen after any change."""
+    def _state(self, key: str, session: EditSession, language: str) -> dict[str, Any]:
+        """Everything the interface needs to draw the screen after any change.
+
+        The session id is part of that. Leaving it out of every answer but
+        the first one meant a window that replaced its state wholesale — the
+        obvious way to use this — lost the id on the first acknowledgement
+        and got "that save is no longer open" for its next call.
+        """
         return {
+            "session": key,
             "path": str(session.save.path),
             "plugin": _plugin_summary(session.plugin),
             "risk": {

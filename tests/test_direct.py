@@ -15,6 +15,7 @@ from pathlib import Path
 
 import pytest
 
+from savesmith.core import direct
 from savesmith.core.backup import BackupStore
 from savesmith.core.direct import AddressError, DirectSave, parse_address
 from savesmith.core.errors import FieldValueError, SaveSmithError
@@ -217,3 +218,73 @@ class TestAddresses:
     def test_a_negative_offset(self) -> None:
         with pytest.raises(AddressError):
             parse_address("-4:uint32-le")
+
+
+class TestListingEveryField:
+    """Showing a player their save, instead of asking them to guess a number.
+
+    The names are not invented: a GVAS file carries ``ObjectiveTime`` and RPG
+    Maker carries ``party._gold``. Reading them out is the difference between
+    an editor and a hex editor with a friendly font.
+    """
+
+    def structured(self, tmp_path: Path) -> Path:
+        save = tmp_path / "save.json"
+        save.write_bytes(
+            json.dumps(
+                {
+                    "party": {"gold": 12400, "steps": 3, "name": "Данил"},
+                    "flags": {"finished": False},
+                    "inventory": [1, 2, 3],
+                    "nothing": None,
+                }
+            ).encode()
+        )
+        return save
+
+    def test_every_value_is_listed_with_its_own_name(self, tmp_path: Path) -> None:
+        leaves = direct.DirectSave.open(self.structured(tmp_path)).fields()
+
+        by_address = {leaf.address: leaf for leaf in leaves}
+        assert by_address["party.gold"].value == 12400
+        assert by_address["party.gold"].name == "gold"
+        assert by_address["party.gold"].group == "party"
+        assert by_address["party.gold"].editable
+
+    def test_only_numbers_can_be_changed(self, tmp_path: Path) -> None:
+        """Because only numbers are what ``change`` will write."""
+        leaves = {leaf.address: leaf for leaf in
+                  direct.DirectSave.open(self.structured(tmp_path)).fields()}
+
+        assert not leaves["party.name"].editable
+        assert not leaves["flags.finished"].editable
+        assert leaves["party.name"].kind == "text"
+        assert leaves["flags.finished"].kind == "flag"
+
+    def test_a_list_of_numbers_stays_one_thing(self, tmp_path: Path) -> None:
+        leaves = {leaf.address: leaf for leaf in
+                  direct.DirectSave.open(self.structured(tmp_path)).fields()}
+
+        assert leaves["inventory"].kind == "list"
+        assert leaves["inventory"].value == [1, 2, 3]
+
+    def test_nothing_is_not_a_field(self, tmp_path: Path) -> None:
+        addresses = {
+            leaf.address
+            for leaf in direct.DirectSave.open(self.structured(tmp_path)).fields()
+        }
+        assert "nothing" not in addresses
+
+    def test_a_save_that_is_only_bytes_has_no_fields(self, tmp_path: Path) -> None:
+        """The honest answer for an Elden Ring slot: there are no names in it.
+
+        Labelling byte 0x124 "Runes" would be a guess presented as a fact, and a
+        wrong one corrupts a save.
+        """
+        save = tmp_path / "opaque.sl2"
+        save.write_bytes(gzip.compress(bytes(range(256)) * 8, mtime=0))
+
+        opened = direct.DirectSave.open(save)
+
+        assert not opened.is_structured
+        assert opened.fields() == []

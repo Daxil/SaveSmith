@@ -73,6 +73,40 @@ class Site:
         return f"{self.address} = {_plain(self.value)}{where}"
 
 
+@dataclass(frozen=True)
+class Leaf:
+    """One value in a decoded save, named the way the game named it.
+
+    No plugin is involved. A GVAS save writes ``ObjectiveTime`` and
+    ``CheckpointName`` into the file itself, RPG Maker writes ``party._gold``;
+    those are the developer's own names, not a guess. Listing them is the
+    difference between "here is your save" and "type a number and hope".
+    """
+
+    address: str
+    """What to pass back to change it."""
+
+    name: str
+    """The last step of the path — the field's own name."""
+
+    group: str
+    """Everything before it, so the interface can bucket what belongs together."""
+
+    value: Any
+    kind: str
+    """number, text, flag or list — what the interface should draw."""
+
+    @property
+    def editable(self) -> bool:
+        """Numbers only, for now: that is all ``change`` will write."""
+        return self.kind == "number"
+
+
+# A save with more values than this is a database, and a list that long helps
+# nobody. The cap is generous enough that no ordinary save reaches it.
+_MAX_FIELDS = 2000
+
+
 @dataclass
 class DirectSave:
     """A save opened without a plugin, through the decoder ladder."""
@@ -118,6 +152,18 @@ class DirectSave:
     @property
     def is_structured(self) -> bool:
         return isinstance(self.value, dict | list)
+
+    # -- reading ---------------------------------------------------------
+
+    def fields(self) -> list[Leaf]:
+        """Every value in the save, with the name the game gave it.
+
+        Only for structured saves. A file that decoded to bytes has no names in
+        it to read, and inventing some would be worse than admitting it.
+        """
+        if not self.is_structured:
+            return []
+        return _leaves(self.value)
 
     # -- finding ---------------------------------------------------------
 
@@ -305,6 +351,52 @@ def _read_offset(payload: bytes, address: str) -> Any:
 # ---------------------------------------------------------------------------
 # Searching
 # ---------------------------------------------------------------------------
+
+
+def _leaves(root: Any) -> list[Leaf]:
+    """Walk a decoded save and collect every value a person could read."""
+    found: list[Leaf] = []
+
+    def kind_of(node: Any) -> str:
+        if isinstance(node, bool):
+            return "flag"
+        if isinstance(node, int | float):
+            return "number"
+        return "text"
+
+    def walk(node: Any, steps: tuple[field_access.PathStep, ...]) -> None:
+        if len(found) >= _MAX_FIELDS:
+            return
+        if isinstance(node, dict):
+            for key, child in node.items():
+                walk(child, (*steps, str(key)))
+            return
+        if isinstance(node, list):
+            # A list of numbers is one thing to a person — a list of structures
+            # is many, so only the second is opened up.
+            if node and all(isinstance(item, int | float | str) for item in node):
+                found.append(_leaf(steps, node, "list"))
+                return
+            for index, child in enumerate(node):
+                walk(child, (*steps, index))
+            return
+        if node is None or isinstance(node, bytes):
+            return  # nothing a person can read or usefully change
+        found.append(_leaf(steps, node, kind_of(node)))
+
+    walk(root, ())
+    return found
+
+
+def _leaf(steps: tuple[field_access.PathStep, ...], value: Any, kind: str) -> Leaf:
+    last = steps[-1] if steps else ""
+    return Leaf(
+        address=field_access.render(steps),
+        name=str(last),
+        group=field_access.render(steps[:-1]),
+        value=value,
+        kind=kind,
+    )
 
 
 def _search_structure(root: Any, wanted: float) -> list[Site]:

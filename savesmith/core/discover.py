@@ -31,6 +31,7 @@ whose coins are sitting in plain sight somewhere else.
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
@@ -40,6 +41,11 @@ from savesmith.core.detect import Report
 from savesmith.core.errors import SaveSmithError
 from savesmith.core.paths import PathResolver, SystemFacade, locate
 from savesmith.core.playerprefs import Entry, open_prefs
+from savesmith.core.target import Target, resolve
+from savesmith.core.wine import is_prefix, machine_for, name_of
+
+# A Windows user profile, swept only when the game itself could not be named.
+_PROFILE_TOKENS = ("SAVEDGAMES", "APPDATA", "LOCALAPPDATA", "LOCALLOW", "DOCUMENTS")
 
 # Files that are never a save, however promising the folder.
 _IGNORED_SUFFIXES = frozenset(
@@ -92,10 +98,28 @@ class GameFolder:
     company: str | None = None
     steam_appid: int | None = None
     anticheat: tuple[str, ...] = ()
+    installed_here: bool = True
+    """False when this folder holds no game — a save folder pointed at directly.
+
+    It decides how hard the folder itself is searched. An install folder is
+    thousands of files of which none is a save, so only save-sounding names are
+    read there; a folder somebody pointed at on purpose is read in full.
+    """
 
     @property
     def has_anticheat(self) -> bool:
         return bool(self.anticheat)
+
+    @property
+    def names(self) -> tuple[str, ...]:
+        """Every name this game might have written on a folder.
+
+        ``ELDEN RING`` installs itself, then saves to ``EldenRing``; the
+        executable is ``eldenring``. All three are the same word to a person
+        and none of them match as strings, so all of them are tried.
+        """
+        candidates = [self.project, self.title]
+        return tuple(dict.fromkeys(name for name in candidates if name))
 
     def summary(self) -> str:
         parts = [self.title, f"engine: {self.engine.value}"]
@@ -106,16 +130,105 @@ class GameFolder:
         return " | ".join(parts)
 
 
+class Kind(StrEnum):
+    """What a file found next to a game actually is.
+
+    A folder of saves is mostly not saves. The Invincible keeps sixty-two
+    rolling backups, four settings files and one save the player made; listing
+    all sixty-seven as "saves" is not thoroughness, it is refusing to answer
+    the question. Nobody knows what their save file is called — that is the
+    whole reason they opened SaveSmith.
+    """
+
+    SAVE = "save"
+    """The player's progress. This is the answer."""
+    BACKUP = "backup"
+    """A copy the game made of a save. Real, and not what was asked for."""
+    SETTINGS = "settings"
+    """Volume, key bindings, which menu was open. Not progress."""
+    OTHER = "other"
+    """Not a save at all — logs, manifests, whatever the walk turned up."""
+
+
+# A copy of a save, made by the game itself.
+_BACKUP_RE = re.compile(
+    r"(_backup_?\d*|_bak\d*|[.\-_]backup|[.\-_]copy|\bcopy\s*\d*\b|_old|_prev(ious)?)",
+    re.IGNORECASE,
+)
+_BACKUP_SUFFIXES = (".bak", ".backup", ".old", ".prev", ".tmp", ".temp")
+
+# Options and menu state. Checked before "save", because a game will happily
+# call a settings file MenuSettingsSave.sav.
+_SETTINGS_WORDS = (
+    "setting", "config", "option", "prefs", "preference", "keybind", "bindings",
+    "input", "controls", "graphic", "video", "audio", "sound", "menu", "language",
+    "profile",
+)
+
+# Formats a game writes its options in. No game stores progress in an .ini.
+_SETTINGS_SUFFIXES = (".ini", ".cfg", ".conf", ".config", ".yaml", ".yml", ".toml")
+
+# Below this a file holds nothing worth editing. An empty two-byte .ini will
+# happily "decode" as base64 and present itself as a save otherwise.
+_MIN_SAVE_BYTES = 32
+
+_ASIDE_WORDS = {
+    Kind.BACKUP: ("backup the game made", "backups the game made"),
+    Kind.SETTINGS: ("settings file", "settings files"),
+    Kind.OTHER: ("other file", "other files"),
+}
+
+
+def classify(name: str, *, openable: bool, size: int = _MIN_SAVE_BYTES) -> Kind:
+    """What this file is, from its name, its size, and whether it could be read.
+
+    Names, mostly. Reading every candidate to guess its purpose would be slower
+    and no more certain: a game that names its backups ``_backup_7`` has told
+    us plainly, and one that does not cannot be second-guessed from bytes.
+    """
+    lowered = name.lower()
+    stem = Path(lowered).stem
+
+    if lowered.endswith(_BACKUP_SUFFIXES) or _BACKUP_RE.search(stem):
+        return Kind.BACKUP
+    if lowered.endswith(_SETTINGS_SUFFIXES):
+        return Kind.SETTINGS
+    if any(word in lowered for word in _SETTINGS_WORDS):
+        return Kind.SETTINGS
+    if not openable or size < _MIN_SAVE_BYTES:
+        # Nothing known opens it, or there is nothing in it. Whatever it is,
+        # showing it to somebody looking for their save is noise.
+        return Kind.OTHER
+    return Kind.SAVE
+
+
 @dataclass(frozen=True)
 class FoundSave:
     path: Path
     location: str
     """Where this came from, in words, for the interface."""
     report: Report
+    modified: float = 0.0
+    """When it was last written. The save being played is the recent one."""
 
     @property
     def recognised(self) -> bool:
+        """Fields can be read out of it, so a plugin can offer them by name."""
         return self.report.solved
+
+    @property
+    def openable(self) -> bool:
+        """The format is understood and rebuilds exactly, fields or not.
+
+        Editing by address works on these — which is the whole documented way
+        into an Elden Ring save — so calling them unrecognised is both wrong
+        and discouraging.
+        """
+        return self.report.openable
+
+    @property
+    def kind(self) -> Kind:
+        return classify(self.path.name, openable=self.openable, size=self.size)
 
     @property
     def format(self) -> str:
@@ -125,6 +238,21 @@ class FoundSave:
     @property
     def size(self) -> int:
         return self.report.look.size
+
+    @property
+    def rank(self) -> tuple[int, str]:
+        """Listing order: readable ones first, then by name.
+
+        By name and not by date, deliberately. ``--slot 2`` has to mean the
+        same file tomorrow as it does today — it decides which save gets
+        overwritten — and a game's own numbering lives in the file names.
+        """
+        return (0 if self.recognised else 1, str(self.path))
+
+    @property
+    def freshness(self) -> tuple[int, float]:
+        """Which one is being played, for picking a single best answer."""
+        return (1 if self.recognised else 0, self.modified)
 
 
 @dataclass(frozen=True)
@@ -156,22 +284,85 @@ class Discovery:
         return [save for save in self.saves if save.recognised]
 
     @property
+    def openable(self) -> list[FoundSave]:
+        """Saves whose format is understood, whether or not fields came out."""
+        return [save for save in self.saves if save.openable]
+
+    def of_kind(self, kind: Kind) -> list[FoundSave]:
+        return [save for save in self.saves if save.kind is kind]
+
+    @property
+    def player_saves(self) -> list[FoundSave]:
+        """The answer to "where is my save", best first.
+
+        This is what an interface shows. The game's own backups, its settings
+        and everything else the walk turned up are counted, not listed.
+        """
+        return sorted(self.of_kind(Kind.SAVE), key=lambda save: save.rank)
+
+    @property
+    def best_save(self) -> FoundSave | None:
+        """The one most likely to be the game in progress: the newest."""
+        saves = self.player_saves
+        return max(saves, key=lambda save: save.freshness) if saves else None
+
+    @property
+    def aside(self) -> dict[Kind, int]:
+        """How many of everything else there was, for one honest sentence."""
+        counted = {
+            kind: len(self.of_kind(kind))
+            for kind in (Kind.BACKUP, Kind.SETTINGS, Kind.OTHER)
+        }
+        return {kind: count for kind, count in counted.items() if count}
+
+    @property
     def found_anything(self) -> bool:
         return bool(self.saves) or bool(self.prefs and self.prefs.entries)
 
-    def explain(self) -> list[str]:
+    def explain(self, *, verbose: bool = False) -> list[str]:
+        """The answer, not the search.
+
+        Only the player's own saves are listed. Everything else is counted in
+        one line: somebody asking where their save is does not want to be
+        handed sixty-two files and asked to work it out.
+        """
         lines = [self.game.summary(), ""]
-        lines += [f"Looked in: {path}" for path in self.searched]
-        if self.prefs is not None:
-            lines.append(f"Looked in: {self.prefs.location} (Unity settings)")
+        if verbose or not self.found_anything:
+            lines += [f"Looked in: {path}" for path in self.searched]
+            if self.prefs is not None:
+                lines.append(f"Looked in: {self.prefs.location} (Unity settings)")
         if not self.found_anything:
             lines.append("No save files found in any of those places.")
             return lines
-        if self.saves:
-            lines.append("")
-            for save in self.saves[:20]:
-                mark = "✓" if save.recognised else "?"
-                lines.append(f"  {mark} {save.path.name} — {save.format} ({save.size} bytes)")
+
+        saves = self.player_saves
+        if saves:
+            lines.append(f"{len(saves)} save(s):" if len(saves) > 1 else "The save:")
+            for save in saves[:20]:
+                mark = "" if save.recognised else " — editable by address only"
+                lines.append(
+                    f"  {save.path.name}  ({save.format}, {save.size} bytes){mark}"
+                )
+                lines.append(f"      {save.path}")
+            if any(not save.recognised for save in saves):
+                lines.append(
+                    "\n  'editable by address only' means the file is understood and "
+                    "rebuilds exactly, but nobody has mapped what its bytes mean yet:"
+                    "\n      savesmith search <file> <the number you see in the game>"
+                )
+        elif self.saves:
+            lines.append(
+                "Nothing here looks like a save the player made — only the game's "
+                "own backups and settings."
+            )
+
+        aside = self.aside
+        if aside:
+            described = ", ".join(
+                f"{count} {_ASIDE_WORDS[kind][0 if count == 1 else 1]}"
+                for kind, count in aside.items()
+            )
+            lines.append(f"\n(Also {described}, which are the game's, not yours.)")
         if self.prefs is not None and self.prefs.entries:
             lines += ["", f"Unity settings ({len(self.prefs.entries)} of them):"]
             shown = self.prefs.numbers or self.prefs.entries
@@ -183,22 +374,44 @@ class Discovery:
         return lines
 
 
-def examine(folder: Path) -> GameFolder:
-    """Work out what this installed game is, from its own files."""
-    title = folder.name
+def examine(folder: Path, name: str | None = None) -> GameFolder:
+    """Work out what this installed game is, from its own files.
+
+    ``name`` is what the user pointed at, when they pointed at an executable or
+    a Mac application rather than a folder. It beats the folder's own name:
+    ``Game`` and ``Binaries`` are packaging, ``eldenring`` is the game.
+    """
     entries = _entries(folder)
-    lowered = {name.lower(): name for name in entries}
+    lowered = {name_.lower(): name_ for name_ in entries}
 
     engine, project, company, evidence = _engine_of(folder, entries, lowered)
     return GameFolder(
         path=folder,
-        title=title,
+        title=name or folder.name,
         engine=engine,
         evidence=evidence,
-        project=project,
+        project=project or name,
         company=company,
         steam_appid=_steam_appid(folder),
         anticheat=_anticheat(folder),
+        installed_here=_looks_installed(engine, entries),
+    )
+
+
+def _looks_installed(engine: Engine, entries: list[str]) -> bool:
+    """Whether a game is installed in this folder, as opposed to saved in it.
+
+    Pointing at a folder full of save files is a perfectly ordinary thing to
+    do, and the answer must not be "no saves found" merely because none of them
+    happens to be called ``save``.
+    """
+    if engine is not Engine.UNKNOWN:
+        return True
+    if len(entries) > 40:
+        return True
+    return any(
+        name.lower().endswith((".exe", ".app", ".dll", ".pck", ".win", "_data"))
+        for name in entries
     )
 
 
@@ -307,9 +520,52 @@ def _anticheat(folder: Path, max_depth: int = 2) -> tuple[str, ...]:
     return tuple(sorted(found))
 
 
+def squash(name: str) -> str:
+    """A name with everything a person would not pronounce taken out.
+
+    ``ELDEN RING``, ``Elden Ring`` and ``eldenring`` are one game; as strings
+    they are three. Comparing the squashed forms is what lets a folder named
+    after the install be matched against the folder the game saves into.
+    """
+    return "".join(character for character in name.lower() if character.isalnum())
+
+
+def _named_like(base: Path | None, *names: str) -> list[Path]:
+    """Children of ``base`` that are one of these games, spelling aside."""
+    if base is None:
+        return []
+    wanted = {squash(name) for name in names if name}
+    if not wanted:
+        return []
+    try:
+        with os.scandir(base) as scan:
+            children = [entry for entry in scan if entry.is_dir(follow_symlinks=False)]
+    except OSError:
+        return []
+    return [Path(entry.path) for entry in children if squash(entry.name) in wanted]
+
+
+@dataclass(frozen=True)
+class Place:
+    """One folder to look in, and how hard to look.
+
+    ``strict`` means only files whose names sound like saves are read. It is on
+    for haystacks — an install folder, a whole Windows user profile — and off
+    for a folder that is named after this game and therefore holds its things.
+    """
+
+    path: Path
+    strict: bool = False
+
+
 def save_locations(game: GameFolder, system: SystemFacade) -> list[Path]:
     """Everywhere this game might keep saves, most likely first."""
+    return [place.path for place in _places(game, system)]
+
+
+def _places(game: GameFolder, system: SystemFacade) -> list[Place]:
     resolver = PathResolver(system)
+    names = game.names
     name = game.project or game.title
     places: list[Path | None] = []
 
@@ -317,12 +573,19 @@ def save_locations(game: GameFolder, system: SystemFacade) -> list[Path]:
         base = resolver.token(key)
         return base.joinpath(*parts) if base is not None else None
 
+    def under(key: str, *parts: str) -> list[Path]:
+        """Folders named after the game under a known base, plus a tail."""
+        base = resolver.token(key)
+        if base is not None and parts:
+            base = base.joinpath(*parts)
+        return _named_like(base, *names)
+
     match game.engine:
         case Engine.UNREAL:
             places += [
-                token("LOCALAPPDATA", name, "Saved", "SaveGames"),
-                game.path / name / "Saved" / "SaveGames",
+                folder / "Saved" / "SaveGames" for folder in under("LOCALAPPDATA")
             ]
+            places += [game.path / name / "Saved" / "SaveGames"]
         case Engine.UNITY:
             if game.company and game.project:
                 places += [
@@ -330,27 +593,43 @@ def save_locations(game: GameFolder, system: SystemFacade) -> list[Path]:
                     token("APPDATA", game.company, game.project),
                     token("APPDATA", f"unity.{game.company}.{game.project}"),
                 ]
+            # Plenty of Unity games ignore the company folder entirely.
+            places += under("LOCALLOW")
         case Engine.RPGMAKER:
             places += [game.path / "www" / "save", game.path / "save"]
         case Engine.GODOT:
-            places += [token("APPDATA", "Godot", "app_userdata", name)]
+            places += under("APPDATA", "Godot", "app_userdata")
         case Engine.GAMEMAKER:
-            places += [token("LOCALAPPDATA", name), token("APPDATA", name)]
+            places += under("LOCALAPPDATA") + under("APPDATA")
         case Engine.UNKNOWN:
             pass
 
-    # Places any game might use, whatever built it.
-    places += [
-        token("SAVEDGAMES", name),
-        token("DOCUMENTS", "My Games", name),
-        token("APPDATA", name),
-        token("LOCALAPPDATA", name),
-        game.path,
-    ]
+    # Places any game might use, whatever built it. Matched by name rather than
+    # joined by name: a game installed as "ELDEN RING" saves into "EldenRing",
+    # and joining the two spellings finds a folder that is not there.
+    for key in ("SAVEDGAMES", "APPDATA", "LOCALAPPDATA", "LOCALLOW"):
+        places += under(key)
+    places += under("DOCUMENTS", "My Games")
+    places += under("DOCUMENTS")
 
-    seen: list[Path] = []
-    for place in places:
-        if place is not None and place.is_dir() and place not in seen:
+    found = [Place(path) for path in places if path is not None]
+
+    # A bottle is an entire Windows filesystem. Walking it as though it were a
+    # game folder turns up registry hives and no saves, so its user profile is
+    # swept for save-sounding names instead, and only after the folders that
+    # carry the game's own name.
+    if is_prefix(game.path):
+        found += [
+            Place(path, strict=True)
+            for path in (resolver.token(key) for key in _PROFILE_TOKENS)
+            if path is not None
+        ]
+    else:
+        found.append(Place(game.path, strict=game.installed_here))
+
+    seen: list[Place] = []
+    for place in found:
+        if place.path.is_dir() and all(place.path != kept.path for kept in seen):
             seen.append(place)
     return seen
 
@@ -363,15 +642,14 @@ def find_saves(
 ) -> Discovery:
     """Look in every plausible place and identify what is there."""
     result = Discovery(game=game)
-    result.searched = save_locations(game, system)
+    places = _places(game, system)
+    result.searched = [place.path for place in places]
 
     seen: set[Path] = set()
-    for place in result.searched:
-        own_folder = place == game.path
-        label = "the game's own folder" if own_folder else str(place)
-        # The install folder is full of everything except saves, so only names
-        # that say "save" are considered there.
-        for path in _candidate_files(place, max_files, strict=own_folder):
+    for place in places:
+        own_folder = place.path == game.path
+        label = "the game's own folder" if own_folder else str(place.path)
+        for path in _candidate_files(place.path, max_files, strict=place.strict):
             resolved = path.resolve()
             if resolved in seen:
                 continue  # reached through a parent location as well
@@ -380,14 +658,61 @@ def find_saves(
                 raw = path.read_bytes()
             except OSError:
                 continue
+            try:
+                modified = path.stat().st_mtime
+            except OSError:
+                modified = 0.0
             result.saves.append(
-                FoundSave(path=path, location=label, report=detect.identify(raw, max_depth=3))
+                FoundSave(
+                    path=path,
+                    location=label,
+                    report=detect.identify(raw, max_depth=3),
+                    modified=modified,
+                )
             )
 
     # Recognised first, then by name so repeated runs read the same.
     result.saves.sort(key=lambda save: (not save.recognised, str(save.path)))
     result.prefs = find_prefs(game, system)
     return result
+
+
+@dataclass(frozen=True)
+class Look:
+    """One path the user pointed at, and everything that followed from it."""
+
+    target: Target
+    system: SystemFacade
+    found: Discovery
+    notes: tuple[str, ...] = ()
+    bottle: str | None = None
+    """The bottle's name, so an interface can word it in its own language."""
+
+    @property
+    def game(self) -> GameFolder:
+        return self.found.game
+
+
+def look_at(path: Path, host: SystemFacade) -> Look:
+    """The whole journey from "the user pointed here" to "these are the saves".
+
+    Every front end goes through this, so that pointing at an executable, at a
+    Mac application, at a bottle wrapper or at a folder all behave the same
+    everywhere rather than in whichever one was written last.
+    """
+    target = resolve(path)
+    # A game inside a bottle keeps its saves in that bottle's AppData, not on
+    # the Mac. Asking the host would find a real, existing, empty folder.
+    system, bottle = machine_for(target.folder, host)
+    game = examine(target.folder, target.name)
+    notes = tuple(note for note in (target.note, bottle) if note)
+    return Look(
+        target=target,
+        system=system,
+        found=find_saves(game, system),
+        notes=notes,
+        bottle=name_of(target.bottle) if target.bottle is not None else None,
+    )
 
 
 def find_prefs(game: GameFolder, system: SystemFacade) -> FoundPrefs | None:

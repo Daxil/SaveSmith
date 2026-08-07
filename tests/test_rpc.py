@@ -186,6 +186,51 @@ class TestEditingSession:
         assert gold["label"] == "Золото"
         assert gold["group"] == "Ресурсы"
 
+    def test_every_answer_carries_the_session_id(self, server: Server, save: Path) -> None:
+        """A window that replaces its state wholesale must not lose the id.
+
+        That is the obvious way to use this — the answer is the whole screen —
+        and for a while only `open` carried the id, so the first acknowledgement
+        silently emptied it and the next call was told the save was no longer
+        open. The user could not edit anything.
+        """
+        opened = result_of(server, "open", path=str(save))
+        key = opened["session"]
+
+        changed = result_of(server, "set", session=key, field="gold", value=500)
+        acknowledged = result_of(server, "acknowledge", session=key, items=["achievements"])
+
+        assert changed["session"] == key
+        assert acknowledged["session"] == key
+
+    def test_a_window_that_follows_the_answers_can_keep_editing(
+        self, server: Server, save: Path
+    ) -> None:
+        """The whole round trip, the way the screen actually does it."""
+        state = result_of(server, "open", path=str(save))
+        for _ in range(3):
+            state = result_of(
+                server, "set", session=state["session"], field="gold", value=500
+            )
+        assert state["pending"][0]["after"] == 500
+
+    def test_the_backup_comes_back_as_an_object(self, server: Server, save: Path) -> None:
+        """Pinned, because the window believed it was a string.
+
+        It rendered the object as text, React refused, the whole tree unmounted
+        and the user got a black window with nothing on it. The shape of an
+        answer is a contract; this is the half of it that can be tested here.
+        """
+        opened = result_of(server, "open", path=str(save))
+        result_of(server, "set", session=opened["session"], field="gold", value=500)
+
+        written = result_of(server, "write", session=opened["session"])
+
+        assert written["written"] is True
+        assert set(written["backup"]) == {"folder", "label"}
+        assert isinstance(written["backup"]["folder"], str)
+        assert isinstance(written["backup"]["label"], str)
+
     def test_setting_a_value_reports_the_new_state(self, server: Server, save: Path) -> None:
         opened = result_of(server, "open", path=str(save))
         state = result_of(server, "set", session=opened["session"], field="gold", value=500)
