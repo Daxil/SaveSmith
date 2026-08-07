@@ -422,8 +422,11 @@ def main(argv: list[str] | None = None) -> int:
     """
     import sys
 
+    from savesmith.core.console import use_utf8
     from savesmith.core.paths import RealSystem
     from savesmith.core.wine import machine_for
+
+    use_utf8(sys.stdout, sys.stderr)
 
     arguments = sys.argv[1:] if argv is None else argv
     if not arguments:

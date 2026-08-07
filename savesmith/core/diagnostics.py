@@ -15,9 +15,11 @@ only locations, so the output is safe to paste into a public issue.
 
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from savesmith.core.console import use_utf8
 from savesmith.core.errors import SaveSmithError, SteamNotFoundError
 from savesmith.core.paths import PathResolver, RealSystem, SystemFacade
 from savesmith.core.platform_ import Platform
@@ -116,6 +118,9 @@ def render(report: Report) -> str:
 
 
 def main() -> int:
+    # Its own entry point, so its own encoding fix: the CI smoke job runs this
+    # module directly, and a Russian Windows console has no em dash either.
+    use_utf8(sys.stdout, sys.stderr)
     report = collect()
     print(render(report))
     # Always zero: an unsupported platform or a missing Steam is information,

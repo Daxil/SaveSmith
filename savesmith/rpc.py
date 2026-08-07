@@ -39,6 +39,7 @@ from savesmith.agent.discovery import discover as run_discovery
 from savesmith.core import checksum as checksum_module
 from savesmith.core import detect, diagnostics, direct, playerprefs
 from savesmith.core.backup import BackupStore
+from savesmith.core.console import use_utf8
 from savesmith.core.discover import examine, find_saves
 from savesmith.core.errors import SaveSmithError
 from savesmith.core.paths import RealSystem, SystemFacade
@@ -83,6 +84,8 @@ class Server:
         """Read requests until the input ends."""
         source = stream_in or sys.stdin
         sink = stream_out or sys.stdout
+        # JSON-RPC is UTF-8 by definition, whatever the console codepage says.
+        use_utf8(source, sink)
         for line in source:
             line = line.strip()
             if not line:

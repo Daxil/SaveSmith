@@ -23,6 +23,7 @@ from savesmith.agent.writer import DEFAULT_MODEL
 from savesmith.core import checksum as checksum_module
 from savesmith.core import compare, detect, diagnostics, direct, playerprefs
 from savesmith.core.backup import BackupStore
+from savesmith.core.console import use_utf8
 from savesmith.core.discover import Discovery, GameFolder, examine, find_saves
 from savesmith.core.errors import SaveSmithError
 from savesmith.core.paths import RealSystem, SystemFacade
@@ -40,6 +41,10 @@ PROGRAM = "savesmith"
 def main(argv: Sequence[str] | None = None, system: SystemFacade | None = None) -> int:
     """``system`` is injectable for the same reason everything else here is:
     so tests never touch the real machine, on any platform."""
+    # Before anything is printed: Windows defaults to a codepage that has no
+    # arrow and no Cyrillic, and every line of Russian output would raise.
+    use_utf8(sys.stdout, sys.stderr)
+
     parser = _parser()
     arguments = parser.parse_args(argv)
     if not getattr(arguments, "handler", None):
