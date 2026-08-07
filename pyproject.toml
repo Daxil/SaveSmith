@@ -9,6 +9,12 @@ dependencies = [
     "msgpack>=1.2.1",
 ]
 
+[project.optional-dependencies]
+# Only 'savesmith discover --model' needs this: it asks a model to write a
+# codec for a format nothing built in can read. Every known format, every
+# edit and every backup works without it, offline and free.
+model = ["anthropic>=0.40"]
+
 [project.scripts]
 savesmith = "savesmith.cli:main"
 

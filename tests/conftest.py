@@ -31,6 +31,24 @@ def pytest_collection_modifyitems(
             item.add_marker(skip_macos)
 
 
+@pytest.fixture(autouse=True)
+def never_reach_a_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No test may build a real API client, on anybody's machine.
+
+    ``make_client`` reads whatever credentials the developer happens to have —
+    an environment variable, a stored profile — so on a machine with an API key
+    a test that forgets to inject a fake would quietly send a real request and
+    charge somebody for it. Tests that want the loop pass their own client;
+    everything else gets nothing.
+    """
+    def refuse() -> None:
+        raise AssertionError(
+            "a test tried to build a real Anthropic client; pass a fake client instead"
+        )
+
+    monkeypatch.setattr("savesmith.agent.writer.make_client", refuse)
+
+
 def _make(*paths: Path) -> None:
     for path in paths:
         path.mkdir(parents=True, exist_ok=True)

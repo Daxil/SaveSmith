@@ -289,13 +289,23 @@ def test_cached_tokens_are_cheaper_than_fresh_ones() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_no_client_means_a_reason_not_a_crash() -> None:
+def test_no_client_means_a_reason_not_a_crash(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No key configured: a sentence for the report, not an exception."""
+    monkeypatch.setattr("savesmith.agent.writer.make_client", lambda: None)
     writer = ModelCodecWriter(client=None)
-    writer.propose(_request())  # make_client() returns None without credentials
 
-    # Either there genuinely is no client here, or the environment has one and
-    # we must not call it in a test.
-    assert writer.reason or writer.client is None
+    assert writer.propose(_request()) is None
+    assert "ANTHROPIC_API_KEY" in writer.reason
+
+
+def test_a_test_can_never_build_a_real_client() -> None:
+    """The guard in conftest, checked rather than assumed.
+
+    Without it, a developer with credentials in their environment would have
+    tests quietly sending real requests and charging them for it.
+    """
+    with pytest.raises(AssertionError, match="real Anthropic client"):
+        ModelCodecWriter(client=None).propose(_request())
 
 
 def test_a_network_failure_is_reported_in_a_sentence() -> None:
