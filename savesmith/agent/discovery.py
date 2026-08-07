@@ -24,7 +24,7 @@ failure at step 5 with a good report is a useful outcome: somebody can read it.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
@@ -41,6 +41,47 @@ from savesmith.core.pipeline import Pipeline, RoundTrip, Step
 
 _HEXDUMP_BYTES = 512
 _HEXDUMP_WIDTH = 16
+_STDERR_TAIL = 1500
+
+# Appended to a proposed codec before it runs. The gate is the same one the
+# rest of SaveSmith uses on its own pipelines — decode, encode, compare byte
+# for byte — and it reports the first offset that differs, which is the single
+# most useful sentence to send back to whoever wrote the codec.
+_CHECK_HARNESS = '''
+
+def _savesmith_shape(value, depth=0):
+    kind = type(value).__name__
+    if isinstance(value, dict):
+        return {"type": kind, "count": len(value),
+                "keys": [str(key) for key in list(value)[:24]]}
+    if isinstance(value, (list, tuple)):
+        first = _savesmith_shape(value[0], depth + 1) if value and depth < 2 else None
+        return {"type": kind, "count": len(value), "first": first}
+    if isinstance(value, (bytes, bytearray, str)):
+        return {"type": kind, "count": len(value)}
+    return {"type": kind}
+
+
+def _savesmith_check(data):
+    value = decode(data)
+    rebuilt = encode(value)
+    if not isinstance(rebuilt, (bytes, bytearray)):
+        raise TypeError("encode returned " + type(rebuilt).__name__ + ", not bytes")
+    rebuilt = bytes(rebuilt)
+    if rebuilt != data:
+        if len(rebuilt) != len(data):
+            raise ValueError(
+                "encode(decode(data)) is %d bytes long; the original is %d"
+                % (len(rebuilt), len(data))
+            )
+        for index in range(len(data)):
+            if rebuilt[index] != data[index]:
+                raise ValueError(
+                    "encode(decode(data)) first differs at offset 0x%X: wrote 0x%02X "
+                    "where the file has 0x%02X" % (index, rebuilt[index], data[index])
+                )
+    return _savesmith_shape(value)
+'''
 
 
 class Stage(StrEnum):
@@ -67,6 +108,20 @@ class StageResult:
 
 
 @dataclass(frozen=True)
+class Attempt:
+    """What came back from running a proposed codec against the real file.
+
+    Deliberately narrow. This is the only thing that travels back towards a
+    model, so it carries an exception message, a byte offset and the names of
+    the fields the codec produced — never the contents of the save.
+    """
+
+    ok: bool
+    error: str = ""
+    shape: str = ""
+
+
+@dataclass(frozen=True)
 class CodecRequest:
     """Everything a model is given. Deliberately not the whole file.
 
@@ -82,6 +137,12 @@ class CodecRequest:
     diff_ranges: tuple[tuple[int, int], ...] = ()
     field_guesses: tuple[str, ...] = ()
     max_budget_usd: float = 1.0
+    trial: Callable[[str], Attempt] | None = None
+    """Runs a candidate module against the real bytes, here, in the sandbox.
+
+    Passed as a closure rather than the bytes themselves: whoever writes the
+    codec gets to find out whether it works without ever holding the file.
+    """
 
     def as_prompt(self) -> str:
         lines = [
@@ -120,6 +181,10 @@ class CodecProposal:
     source: str
     explanation: str = ""
     cost_usd: float = 0.0
+    verified: bool = False
+    """True only when ``encode(decode(file))`` reproduced the file exactly."""
+
+    attempts: int = 0
 
 
 class CodecWriter(Protocol):
@@ -162,7 +227,22 @@ class Discovery:
 
     @property
     def solved(self) -> bool:
-        return self.round_trip is not None and self.round_trip.exact_bytes
+        """The file can be taken apart and put back together byte for byte.
+
+        Either route counts: a pipeline built from operations SaveSmith already
+        has, or a codec written for this format that passed the same gate.
+        """
+        by_pipeline = self.round_trip is not None and self.round_trip.exact_bytes
+        return by_pipeline or self.codec_verified
+
+    @property
+    def codec_verified(self) -> bool:
+        return (
+            self.codec is not None
+            and self.codec.verified
+            and self.codec_result is not None
+            and self.codec_result.ok
+        )
 
     @property
     def needs_a_person(self) -> bool:
@@ -177,6 +257,15 @@ class Discovery:
             lines += [f"  {spec.describe()}" for spec in self.checksums]
         if self.field_candidates:
             lines += ["", "Candidate fields:", *[f"  {item}" for item in self.field_candidates]]
+        if self.codec is not None:
+            state = "verified against this file" if self.codec_verified else "NOT verified"
+            lines += [
+                "",
+                f"A codec was written for this format ({state}, "
+                f"{len(self.codec.source.splitlines())} lines).",
+            ]
+            if self.codec.explanation:
+                lines += ["", self.codec.explanation]
         if self.cost_usd:
             lines.append(f"\nModel cost: ${self.cost_usd:.2f}")
         return lines
@@ -313,6 +402,10 @@ def discover(
             )
         except SaveSmithError as exc:
             result.stages.append(StageResult(Stage.ROUND_TRIP, False, exc.user_message))
+    elif result.codec_verified:
+        result.stages.append(
+            StageResult(Stage.ROUND_TRIP, True, "byte-identical, through the written codec")
+        )
     else:
         result.stages.append(StageResult(Stage.ROUND_TRIP, False, "no pipeline to test"))
 
@@ -381,6 +474,44 @@ def _compare_saves(
     return tuple(byte_diff.ranges)
 
 
+def trial_for(raw: bytes, *, limits: Limits | None = None) -> Callable[[str], Attempt]:
+    """A closure that answers "does this codec rebuild this file?"
+
+    Nothing about the file escapes it. What comes back is whether the module
+    survived, the exception if it did not, and the names of the fields it
+    produced.
+    """
+    limits = limits or Limits()
+
+    def trial(source: str) -> Attempt:
+        outcome = run(
+            source + _CHECK_HARNESS, call="_savesmith_check", payload=raw, limits=limits
+        )
+        if outcome.ok:
+            return Attempt(ok=True, shape=describe_shape(outcome.value))
+        error = outcome.error
+        tail = outcome.stderr.strip()[-_STDERR_TAIL:]
+        if tail and tail not in error:
+            error = f"{error}\n{tail}"
+        return Attempt(ok=False, error=error)
+
+    return trial
+
+
+def describe_shape(value: Any) -> str:
+    """Turn the harness's report into one sentence for the feedback message."""
+    if not isinstance(value, dict):
+        return ""
+    kind = str(value.get("type", "value"))
+    keys = value.get("keys")
+    if keys:
+        return f"decode() returned a {kind} with keys: " + ", ".join(str(key) for key in keys)
+    count = value.get("count")
+    if count is not None:
+        return f"decode() returned a {kind} of {count}"
+    return f"decode() returned a {kind}"
+
+
 def _ask_for_a_codec(
     result: Discovery,
     raw: bytes,
@@ -397,15 +528,17 @@ def _ask_for_a_codec(
         diff_ranges=diff_ranges,
         field_guesses=result.field_candidates,
         max_budget_usd=max_budget_usd,
+        trial=trial_for(raw),
     )
 
     proposal = writer.propose(request)
     if proposal is None:
+        reason = getattr(writer, "reason", "") or "no model configured"
         result.stages.append(
             StageResult(
                 Stage.MODEL,
                 False,
-                "not attempted (no model configured)",
+                f"not attempted ({reason})",
                 detail="everything free was tried; this file needs a codec written for it",
             )
         )
@@ -413,13 +546,23 @@ def _ask_for_a_codec(
 
     result.codec = proposal
     result.cost_usd += proposal.cost_usd
-    sandboxed = run(proposal.source, payload=raw, limits=Limits())
+    # The writer has already put this through the same gate; running it once
+    # more keeps the report self-contained for anyone reading it later, and
+    # covers writers that skipped the trial.
+    sandboxed = run(
+        proposal.source + _CHECK_HARNESS, call="_savesmith_check", payload=raw, limits=Limits()
+    )
     result.codec_result = sandboxed
     result.stages.append(
         StageResult(
             Stage.MODEL,
             sandboxed.ok,
-            "the proposed codec ran" if sandboxed.ok else sandboxed.error,
+            (
+                f"a codec was written and rebuilds the file exactly "
+                f"({proposal.attempts} attempt(s), ${proposal.cost_usd:.2f})"
+                if sandboxed.ok
+                else f"the proposed codec does not rebuild the file: {sandboxed.error}"
+            ),
             detail=proposal.explanation,
         )
     )

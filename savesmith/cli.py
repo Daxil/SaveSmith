@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from savesmith.agent.discovery import discover as run_discovery
+from savesmith.agent.writer import DEFAULT_MODEL
 from savesmith.core import checksum as checksum_module
 from savesmith.core import compare, detect, diagnostics, playerprefs
 from savesmith.core.backup import BackupStore
@@ -124,12 +125,27 @@ def _cmd_checksum(arguments: argparse.Namespace, _system: SystemFacade) -> int:
 
 
 def _cmd_discover(arguments: argparse.Namespace, system: SystemFacade) -> int:
+    writer = None
+    if arguments.model:
+        from savesmith.agent.writer import ModelCodecWriter
+
+        writer = ModelCodecWriter(
+            model=arguments.model,
+            log=lambda message: print(f"  … {message}"),
+        )
+        print(
+            f"A model may be asked to write a codec if nothing known fits, "
+            f"spending at most ${arguments.budget:.2f}.\n"
+        )
+
     result = run_discovery(
         Path(arguments.file),
         backups=BackupStore.for_system(system),
         second_save=Path(arguments.second) if arguments.second else None,
         known_before=arguments.was,
         known_after=arguments.now,
+        writer=writer,
+        max_budget_usd=arguments.budget,
     )
     for line in result.explain():
         print(line)
@@ -140,6 +156,13 @@ def _cmd_discover(arguments: argparse.Namespace, system: SystemFacade) -> int:
         target = Path(arguments.output or f"{arguments.draft}-manifest.json")
         target.write_text(json.dumps(draft, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
         print(f"\nDraft manifest written to {target}")
+        if result.codec is not None:
+            # Next to the manifest, because a plugin that needs a codec loads
+            # it from its own folder.
+            codec_path = target.with_name("codec.py")
+            codec_path.write_text(result.codec.source, encoding="utf-8")
+            note = "" if result.codec_verified else "  (NOT verified — read it before using it)"
+            print(f"Codec written to {codec_path}{note}")
     return 0 if result.solved else 1
 
 
@@ -476,6 +499,24 @@ def _parser() -> argparse.ArgumentParser:
     discover.add_argument("--now", type=float, help="the value after")
     discover.add_argument("--draft", metavar="PLUGIN_ID", help="write a draft plugin manifest")
     discover.add_argument("--output", help="where to write the draft")
+    discover.add_argument(
+        "--model",
+        nargs="?",
+        const=DEFAULT_MODEL,
+        default=None,
+        metavar="NAME",
+        help=(
+            "if nothing known fits the file, ask a model to write a codec for it. "
+            f"Costs money and needs an API key. Defaults to {DEFAULT_MODEL}."
+        ),
+    )
+    discover.add_argument(
+        "--budget",
+        type=float,
+        default=1.0,
+        metavar="USD",
+        help="the most --model may spend on one file (default: 1.00)",
+    )
     discover.set_defaults(handler=_cmd_discover)
 
     diff = subparsers.add_parser(

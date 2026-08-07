@@ -60,6 +60,14 @@ def save(tmp_path: Path) -> Path:
     return path
 
 
+@pytest.fixture
+def opaque(tmp_path: Path) -> Path:
+    """A file nothing built in can open, so discovery reaches the model step."""
+    path = tmp_path / "mystery.sav"
+    path.write_bytes(b"\x11\x22\x33\x44" * 512)
+    return path
+
+
 def run(*argv: str) -> int:
     return cli.main(list(argv), system=MACHINE[0] if MACHINE else None)
 
@@ -308,6 +316,34 @@ class TestDiscovery:
         draft = json.loads(target.read_text(encoding="utf-8"))
         assert draft["id"] == "new-game"
         assert draft["confidence"] == "experimental"
+
+    def test_no_model_is_asked_unless_it_was_requested(
+        self, home: FakeSystem, save: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The expensive step is opt-in. Nothing here should reach the network."""
+        from savesmith.agent import writer as writer_module
+
+        def refuse() -> object:
+            raise AssertionError("discover built a model client without --model")
+
+        monkeypatch.setattr(writer_module, "make_client", refuse)
+        assert run("discover", str(save)) == 0
+
+    def test_the_model_flag_reports_a_missing_key_rather_than_failing(
+        self,
+        home: FakeSystem,
+        opaque: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        from savesmith.agent import writer as writer_module
+
+        monkeypatch.setattr(writer_module, "make_client", lambda: None)
+        # An unreadable file with no model available: a report, not a crash.
+        assert run("discover", str(opaque), "--model", "--budget", "0.25") == 1
+        out = capsys.readouterr().out
+        assert "at most $0.25" in out
+        assert "ANTHROPIC_API_KEY" in out
 
 
 class TestInterruption:

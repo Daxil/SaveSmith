@@ -165,9 +165,14 @@ class TestTheModelStep:
         class Writer:
             def propose(self, request: CodecRequest) -> CodecProposal:
                 return CodecProposal(
-                    source="def decode(data):\n    return data[:4]\n",
-                    explanation="takes the header",
+                    source=(
+                        "def decode(data):\n    return list(data)\n\n\n"
+                        "def encode(value):\n    return bytes(value)\n"
+                    ),
+                    explanation="a byte list",
                     cost_usd=0.03,
+                    verified=True,
+                    attempts=1,
                 )
 
         result = discover(opaque_save(tmp_path), backups=store, writer=Writer())
@@ -175,6 +180,30 @@ class TestTheModelStep:
         assert model is not None and model.ok  # type: ignore[attr-defined]
         assert result.codec_result is not None and result.codec_result.ok
         assert result.cost_usd == pytest.approx(0.03)
+        assert result.codec_verified
+        assert result.solved
+
+    def test_a_codec_that_cannot_rebuild_the_file_is_rejected(
+        self, tmp_path: Path, store: BackupStore
+    ) -> None:
+        """Decoding is not enough. A codec that cannot put the file back is a
+        way to corrupt a save, so it does not count as a solution."""
+
+        class Writer:
+            def propose(self, request: CodecRequest) -> CodecProposal:
+                return CodecProposal(
+                    source=(
+                        "def decode(data):\n    return list(data[:4])\n\n\n"
+                        "def encode(value):\n    return bytes(value)\n"
+                    ),
+                )
+
+        result = discover(opaque_save(tmp_path), backups=store, writer=Writer())
+        model = stage_of(result, Stage.MODEL)
+        assert model is not None and not model.ok  # type: ignore[attr-defined]
+        assert "does not rebuild the file" in model.summary  # type: ignore[attr-defined]
+        assert not result.codec_verified
+        assert not result.solved
 
     def test_a_codec_that_misbehaves_is_contained(
         self, tmp_path: Path, store: BackupStore
