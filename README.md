@@ -74,6 +74,7 @@ uv sync                # окружение и зависимости
 uv run pytest          # тесты
 uv run ruff check .    # линтер
 uv run mypy            # типы
+uv run mypy --platform win32   # типы так, как их видит Windows
 ```
 
 Диагностика — что SaveSmith видит на твоей машине:
