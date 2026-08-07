@@ -32,7 +32,7 @@ from savesmith.core.risk import Acknowledgement, Assessment, RiskDatabase, asses
 from savesmith.core.session import EditSession
 from savesmith.core.steam import SteamInstall
 from savesmith.core.store import PluginStore
-from savesmith.core.wine import scan_prefixes
+from savesmith.core.wine import machine_for, scan_prefixes
 
 PROGRAM = "savesmith"
 
@@ -99,7 +99,11 @@ def _cmd_scan(arguments: argparse.Namespace, system: SystemFacade) -> int:
 
 def _cmd_find(arguments: argparse.Namespace, system: SystemFacade) -> int:
     """Point at a game folder, get its saves."""
-    game = examine(Path(arguments.folder).expanduser())
+    folder = Path(arguments.folder).expanduser()
+    system, note = machine_for(folder, system)
+    if note:
+        print(f"({note})")
+    game = examine(folder)
     for line in find_saves(game, system).explain():
         print(line)
     return 0
@@ -173,29 +177,28 @@ def _cmd_diff(arguments: argparse.Namespace, _system: SystemFacade) -> int:
     again. Two files and two numbers pin a field down that no amount of
     staring at a hex dump would.
     """
-    before_raw = _read(Path(arguments.before))
-    after_raw = _read(Path(arguments.after))
+    # Opened the same way 'search' and 'poke' open a save: every layer the
+    # ladder can peel off, peeled off. Comparing two encrypted Elden Ring
+    # slots byte for byte would show that everything changed and mean nothing.
+    before_save = direct.DirectSave.open(Path(arguments.before))
+    after_save = direct.DirectSave.open(Path(arguments.after))
 
-    before_report = detect.identify(before_raw, max_depth=3)
-    after_report = detect.identify(after_raw, max_depth=3)
-
-    if before_report.solved and after_report.solved:
-        assert before_report.best is not None and after_report.best is not None
-        before = before_report.best.pipeline.decode(before_raw).value
-        after = after_report.best.pipeline.decode(after_raw).value
-        changes = compare.compare_structures(before, after)
+    if before_save.is_structured and after_save.is_structured:
+        changes = compare.compare_structures(before_save.value, after_save.value)
         numeric = compare.numeric_changes(changes)
 
-        print(f"Format: {before_report.best.description}")
+        print(f"Format: {before_save.description}")
         print(f"{len(changes)} value(s) changed, {len(numeric)} of them numbers\n")
         for change in (numeric if arguments.numbers_only else changes):
             print(f"  {change}")
         return 0 if changes else 1
 
-    print("Neither save could be decoded, so comparing bytes.\n")
+    before_raw = _payload_of(before_save)
+    after_raw = _payload_of(after_save)
+    print(f"Format: {before_save.description}. Comparing bytes.\n")
     if len(before_raw) != len(after_raw):
         print(
-            f"The two files are different sizes ({len(before_raw)} and {len(after_raw)} "
+            f"The two saves are different sizes ({len(before_raw)} and {len(after_raw)} "
             f"bytes), so their bytes cannot be lined up."
         )
         return 1
@@ -218,10 +221,18 @@ def _cmd_diff(arguments: argparse.Namespace, _system: SystemFacade) -> int:
     if not guesses:
         print(f"\nNo place holds {arguments.was:g} before and {arguments.now:g} after.")
         return 1
-    print(f"\n{len(guesses)} candidate field(s):")
-    for guess in guesses:
-        print(f"  {guess}")
+    collapsed = compare.group_by_bytes(guesses)
+    print(f"\n{len(collapsed)} candidate field(s):")
+    for guess, others in collapsed:
+        also = f"   (also {', '.join(others)})" if others else ""
+        print(f"  {guess}{also}")
+    print(f"\nChange one with: savesmith poke {_quote(Path(arguments.after))} <address> <value>")
     return 0
+
+
+def _payload_of(save: direct.DirectSave) -> bytes:
+    """The decoded bytes of a save, or its raw bytes if it decodes to a structure."""
+    return save.value if isinstance(save.value, bytes) else save.raw
 
 
 def _cmd_search(arguments: argparse.Namespace, system: SystemFacade) -> int:
@@ -324,6 +335,11 @@ def _one_save_and_game(
     target = Path(arguments.file).expanduser()
     if not target.is_dir():
         return target, None
+    # A Windows game inside a bottle keeps its saves in the bottle's AppData,
+    # not the Mac's. Asking the host would find a real, existing, empty folder.
+    system, note = machine_for(target, system)
+    if note:
+        print(f"({note})")
     game = examine(target)
     found = find_saves(game, system)
     if not found.saves:

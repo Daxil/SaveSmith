@@ -20,6 +20,7 @@ from savesmith.rpc import (
     SAVESMITH_ERROR,
     Server,
 )
+from tests.conftest import seed_player_prefs
 
 MANIFEST: dict[str, Any] = {
     "id": "rpc-test-game",
@@ -349,21 +350,17 @@ class TestEditingWithoutAPlugin:
 
 
 class TestPlayerPrefsOverTheWire:
-    def _plist(self, home: FakeSystem, **values: Any) -> None:
-        import plistlib
-
-        folder = home.home_dir / "Library" / "Preferences"
-        folder.mkdir(parents=True, exist_ok=True)
-        with (folder / "unity.Tiny Studio.Coin Quest.plist").open("wb") as handle:
-            plistlib.dump(values, handle, fmt=plistlib.FMT_BINARY)
+    def _stored(self, home: FakeSystem, **values: Any) -> None:
+        """Seeded through whichever store this platform uses, not a plist."""
+        seed_player_prefs(home, "Tiny Studio", "Coin Quest", **values)
 
     def test_reading(self, server: Server, home: FakeSystem) -> None:
-        self._plist(home, coins=250, muted=True)
+        self._stored(home, coins=250, muted=True)
         result = result_of(server, "prefs.read", company="Tiny Studio", product="Coin Quest")
         assert {entry["name"] for entry in result["entries"]} == {"coins", "muted"}
 
     def test_writing_backs_up_first(self, server: Server, home: FakeSystem) -> None:
-        self._plist(home, coins=250)
+        self._stored(home, coins=250)
         written = result_of(
             server, "prefs.set", company="Tiny Studio", product="Coin Quest",
             name="coins", value=9999,
@@ -373,7 +370,7 @@ class TestPlayerPrefsOverTheWire:
 
     def test_the_stored_type_survives(self, server: Server, home: FakeSystem) -> None:
         """A number that comes back as a string is a setting the game cannot read."""
-        self._plist(home, coins=250)
+        self._stored(home, coins=250)
         result_of(
             server, "prefs.set", company="Tiny Studio", product="Coin Quest",
             name="coins", value="9999",
@@ -382,7 +379,7 @@ class TestPlayerPrefsOverTheWire:
         assert after["entries"][0]["value"] == 9999
 
     def test_a_setting_that_is_not_there(self, server: Server, home: FakeSystem) -> None:
-        self._plist(home, coins=250)
+        self._stored(home, coins=250)
         response = call(
             server, "prefs.set", company="Tiny Studio", product="Coin Quest",
             name="gems", value=1,

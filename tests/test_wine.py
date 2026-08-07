@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from savesmith.core import wine
 from savesmith.core.errors import AmbiguousWineUserError, WinePrefixError
 from savesmith.core.paths import FakeSystem, KnownFolder, RegistryHive
 from savesmith.core.platform_ import Platform, current_platform
@@ -373,3 +374,78 @@ def test_describe_prefixes_is_readable() -> None:
     line = describe_prefixes([prefix])[0]
     assert "My Games" in line
     assert "crossover, danil" in line
+
+
+class TestWhichMachineAFolderIsOn:
+    """Every command that takes a game folder has to ask this. A Windows game
+    inside a bottle keeps its saves in the bottle's AppData, and asking the Mac
+    finds a real, existing, empty folder instead."""
+
+    def test_an_ordinary_folder_is_on_this_machine(
+        self, tmp_path: Path, macos_system: FakeSystem
+    ) -> None:
+        system, note = wine.machine_for(tmp_path / "Games" / "Hollow Knight", macos_system)
+        assert system is macos_system
+        assert note is None
+
+    def test_a_folder_inside_a_bottle_switches_machines(
+        self, tmp_path: Path, macos_system: FakeSystem
+    ) -> None:
+        bottle = tmp_path / "Bottles" / "Whisky Bottle"
+        game = bottle / "drive_c" / "Program Files" / "Hollow Knight"
+        game.mkdir(parents=True)
+        (bottle / "system.reg").write_text("WINE REGISTRY Version 2\n", encoding="utf-8")
+        (bottle / "drive_c" / "users" / "crossover").mkdir(parents=True)
+
+        system, note = wine.machine_for(game, macos_system)
+
+        assert system is not macos_system
+        assert note is not None and "bottle" in note
+        assert system.platform is Platform.WINDOWS, "inside a bottle it is a Windows machine"
+
+    def test_a_folder_that_only_looks_like_a_bottle_is_left_alone(
+        self, tmp_path: Path, macos_system: FakeSystem
+    ) -> None:
+        """A folder called drive_c with no registry hives is not a bottle."""
+        game = tmp_path / "backup" / "drive_c" / "Games"
+        game.mkdir(parents=True)
+        system, note = wine.machine_for(game, macos_system)
+        assert system is macos_system and note is None
+
+    def test_the_bottle_is_found_by_walking_up(self, tmp_path: Path) -> None:
+        bottle = tmp_path / "Bottle"
+        deep = bottle / "drive_c" / "a" / "b" / "c"
+        deep.mkdir(parents=True)
+        assert wine.containing_prefix(deep) == bottle
+        assert wine.containing_prefix(tmp_path / "elsewhere") is None
+
+
+class TestOneDirectoryIsOneProfile:
+    """Wineskin ships one real profile plus a symlink for every name the host
+    user might have, so the bottle works on anybody's machine."""
+
+    def _bottle(self, tmp_path: Path) -> Path:
+        bottle = tmp_path / "Game.app" / "Contents" / "SharedSupport" / "prefix"
+        users = bottle / "drive_c" / "users"
+        (users / "Wineskin" / "AppData" / "Roaming").mkdir(parents=True)
+        (bottle / "system.reg").write_text("WINE REGISTRY Version 2\n", encoding="utf-8")
+        for alias in ("danil", "crossover"):
+            (users / alias).symlink_to("Wineskin")
+        return bottle
+
+    def test_symlinked_aliases_collapse_into_one(self, tmp_path: Path) -> None:
+        prefix = wine._describe(self._bottle(tmp_path))
+        assert prefix.users == ("Wineskin",), "three names, one directory"
+
+    def test_and_so_there_is_nothing_to_ask_about(
+        self, tmp_path: Path, macos_system: FakeSystem
+    ) -> None:
+        prefix = wine._describe(self._bottle(tmp_path))
+        assert prefix.preferred_user(macos_system) == "Wineskin"
+
+    def test_genuinely_separate_profiles_are_still_separate(self, tmp_path: Path) -> None:
+        bottle = tmp_path / "bottle"
+        for name in ("ann", "bob"):
+            (bottle / "drive_c" / "users" / name / "AppData").mkdir(parents=True)
+        (bottle / "system.reg").write_text("WINE REGISTRY Version 2\n", encoding="utf-8")
+        assert wine._describe(bottle).users == ("ann", "bob")

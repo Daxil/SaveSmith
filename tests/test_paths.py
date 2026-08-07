@@ -188,7 +188,15 @@ class TestResolve:
         found = PathResolver(windows_system).resolve(
             "{LOCALLOW}/team cherry/HOLLOW KNIGHT/user*.dat"
         )
-        assert [path.name for path in found] == ["User3.DAT", "user1.dat", "user2.dat"]
+        # Sorted case-insensitively: which of "User3.DAT" and "user1.dat" comes
+        # first is the filesystem's business, and it differs between a
+        # case-sensitive volume and Windows. What matters is that all three
+        # were found through a differently-cased pattern.
+        assert sorted(path.name.lower() for path in found) == [
+            "user1.dat",
+            "user2.dat",
+            "user3.dat",
+        ]
 
     def test_missing_folder_is_an_empty_list_not_an_error(
         self, windows_system: FakeSystem

@@ -27,7 +27,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
-from savesmith.core.errors import AmbiguousWineUserError, WinePrefixError
+from savesmith.core.errors import AmbiguousWineUserError, SaveSmithError, WinePrefixError
 from savesmith.core.paths import KnownFolder, PathResolver, RegistryHive, SystemFacade, locate
 from savesmith.core.platform_ import Platform
 
@@ -143,6 +143,50 @@ def find_app_wrappers(folders: Iterable[Path]) -> Iterator[Path]:
             candidate = Path(bundle).joinpath(*_WRAPPER_SUFFIX)
             if is_prefix(candidate):
                 yield candidate
+
+
+def containing_prefix(folder: Path) -> Path | None:
+    """The bottle a folder is inside, by walking up to ``drive_c``.
+
+    Cheap and local: no scanning, no guessing. A path with ``drive_c`` above it
+    is inside a Windows filesystem, and that is exactly the fact that matters.
+    """
+    for parent in [folder, *folder.parents]:
+        if parent.name == "drive_c" and (parent.parent / "drive_c").is_dir():
+            return parent.parent
+    return None
+
+
+def machine_for(folder: Path, host: SystemFacade) -> tuple[SystemFacade, str | None]:
+    """The machine a game folder lives on, and a note if it is not this one.
+
+    A Windows game inside a bottle keeps its saves at ``{LOCALAPPDATA}`` — but
+    that means the bottle's AppData, not the Mac's Application Support. Asking
+    the host system where the saves are gives a real, existing, empty folder,
+    and the player is told their game has no saves. Every command that takes a
+    game folder therefore has to ask this first.
+
+    Returns the host itself when the folder is an ordinary one, so callers do
+    not need to care which case they are in.
+    """
+    bottle = containing_prefix(folder)
+    if bottle is None:
+        return host, None
+
+    nearby = scan_prefixes(host, [bottle.parent])
+    prefix = next((item for item in nearby if item.path == bottle), None)
+    if prefix is None and is_prefix(bottle):
+        prefix = next(iter(scan_prefixes(host, [bottle])), None)
+    if prefix is None or not prefix.users:
+        return host, None
+
+    try:
+        user = prefix.preferred_user(host)
+    except SaveSmithError:
+        # Several profiles and no way to tell which is the player's. Better to
+        # carry on as the host than to pick one and edit a stranger's save.
+        return host, None
+    return prefix.system(user), f"inside the Windows bottle {prefix.name}"
 
 
 def is_prefix(path: Path) -> bool:
@@ -284,8 +328,8 @@ def _profiles_in(prefix: Path) -> list[str]:
         return []
     try:
         with os.scandir(users_dir) as entries:
-            names = [
-                entry.name
+            found = [
+                entry
                 for entry in entries
                 # follow_symlinks stays on here: CrossOver's "crossover"
                 # profile is often a link, and it is a real profile.
@@ -293,7 +337,23 @@ def _profiles_in(prefix: Path) -> list[str]:
             ]
     except OSError:
         return []
-    return sorted(names)
+
+    # Wineskin ships one real profile plus a symlink for every name the host
+    # user might have — "danil -> Wineskin", "crossover -> Wineskin" — so that
+    # the bottle works on anybody's machine. Counting those as three profiles
+    # would make SaveSmith ask which of three identical folders the player
+    # means. One directory is one profile, whatever it is called; the real
+    # directory's own name wins over the links pointing at it.
+    by_target: dict[Path, str] = {}
+    for entry in found:
+        try:
+            target = Path(entry.path).resolve()
+        except OSError:
+            target = Path(entry.path)
+        existing = by_target.get(target)
+        if existing is None or (entry.name == target.name and existing != target.name):
+            by_target[target] = entry.name
+    return sorted(by_target.values())
 
 
 class BottleSystem:

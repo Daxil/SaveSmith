@@ -12,7 +12,7 @@ import pytest
 
 from savesmith.core.diagnostics import collect, main, render
 from savesmith.core.paths import FakeSystem, KnownFolder, RegistryHive
-from savesmith.core.platform_ import Platform
+from savesmith.core.platform_ import Platform, current_platform
 from tests.test_steam import write_manifest
 
 
@@ -75,6 +75,10 @@ def test_steam_problems_are_shown_not_swallowed(tmp_path: Path) -> None:
     assert "problem:" in render(collect(system))
 
 
+@pytest.mark.skipif(
+    current_platform() is Platform.WINDOWS,
+    reason="building a bottle needs symlinks and a file called 'c:'",
+)
 def test_bottles_are_listed_with_their_profiles(tmp_path: Path) -> None:
     from tests.test_wine import make_bottle
 

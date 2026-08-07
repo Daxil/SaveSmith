@@ -17,7 +17,9 @@ import pytest
 from savesmith import cli
 from savesmith.core.errors import SaveSmithError
 from savesmith.core.paths import FakeSystem
+from savesmith.core.playerprefs import open_prefs
 from savesmith.core.store import PluginStore
+from tests.conftest import seed_player_prefs
 
 MANIFEST: dict[str, Any] = {
     "id": "cli-test-game",
@@ -468,15 +470,7 @@ class TestPlayerPrefs:
         self, home: FakeSystem, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Plenty of Unity games keep real progress here rather than in a save."""
-        import plistlib
-
-        from savesmith.core.paths import PathResolver
-
-        prefs_dir = PathResolver(home).token("PREFS")
-        assert prefs_dir is not None
-        prefs_dir.mkdir(parents=True, exist_ok=True)
-        with (prefs_dir / "unity.Studio.Game.plist").open("wb") as handle:
-            plistlib.dump({"coins": 250}, handle, fmt=plistlib.FMT_BINARY)
+        seed_player_prefs(home, "Studio", "Game", coins=250)
 
         assert run("prefs", "--company", "Studio", "--product", "Game") == 0
         assert "coins" in capsys.readouterr().out
@@ -484,39 +478,19 @@ class TestPlayerPrefs:
     def test_changing_one_backs_it_up_first(
         self, home: FakeSystem, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        import plistlib
-
-        from savesmith.core.paths import PathResolver
-
-        prefs_dir = PathResolver(home).token("PREFS")
-        assert prefs_dir is not None
-        prefs_dir.mkdir(parents=True, exist_ok=True)
-        path = prefs_dir / "unity.Studio.Game.plist"
-        with path.open("wb") as handle:
-            plistlib.dump({"coins": 250}, handle, fmt=plistlib.FMT_BINARY)
+        seed_player_prefs(home, "Studio", "Game", coins=250)
 
         code = run("prefs", "--company", "Studio", "--product", "Game", "--set", "coins", "9999")
         assert code == 0
         assert "Backup:" in capsys.readouterr().out
-        with path.open("rb") as handle:
-            assert plistlib.load(handle)["coins"] == 9999
+        assert open_prefs(home, "Studio", "Game").read()["coins"].value == 9999
 
     def test_the_stored_type_is_kept(self, home: FakeSystem) -> None:
         """Turning a number into text would give the game something it cannot read."""
-        import plistlib
-
-        from savesmith.core.paths import PathResolver
-
-        prefs_dir = PathResolver(home).token("PREFS")
-        assert prefs_dir is not None
-        prefs_dir.mkdir(parents=True, exist_ok=True)
-        path = prefs_dir / "unity.Studio.Game.plist"
-        with path.open("wb") as handle:
-            plistlib.dump({"coins": 250}, handle, fmt=plistlib.FMT_BINARY)
+        seed_player_prefs(home, "Studio", "Game", coins=250)
 
         run("prefs", "--company", "Studio", "--product", "Game", "--set", "coins", "7")
-        with path.open("rb") as handle:
-            assert isinstance(plistlib.load(handle)["coins"], int)
+        assert open_prefs(home, "Studio", "Game").read()["coins"].value == 7
 
     def test_it_asks_for_the_names_it_needs(
         self, home: FakeSystem, capsys: pytest.CaptureFixture[str]
@@ -630,17 +604,12 @@ class TestPointingAtAGameFolder:
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         """Its progress is real, it is just not in a file."""
-        import plistlib
-
         game = tmp_path / "Coin Quest"
         (game / "CoinQuest_Data").mkdir(parents=True)
         (game / "CoinQuest_Data" / "app.info").write_text(
             "Tiny Studio\nCoin Quest\n", encoding="utf-8"
         )
-        prefs = home.home_dir / "Library" / "Preferences"
-        prefs.mkdir(parents=True, exist_ok=True)
-        with (prefs / "unity.Tiny Studio.Coin Quest.plist").open("wb") as handle:
-            plistlib.dump({"coins": 250}, handle, fmt=plistlib.FMT_BINARY)
+        seed_player_prefs(home, "Tiny Studio", "Coin Quest", coins=250)
 
         assert run("show", str(game)) == 1
         assert "savesmith prefs" in capsys.readouterr().err
@@ -761,3 +730,38 @@ class TestSearchAndPoke:
         out = capsys.readouterr().out
         assert "0x20:uint32-le" in out
         assert "int16" not in out
+
+
+class TestDiffPeelsTheWrappers:
+    """Comparing two compressed or encrypted saves byte for byte says only
+    that everything changed. Both files get opened the way poke opens them."""
+
+    def _wrapped(self, path: Path, value: int) -> Path:
+        import struct
+
+        body = bytearray(b"\x00" * 256)
+        struct.pack_into("<i", body, 0x30, value)
+        path.write_bytes(gzip.compress(bytes(body), mtime=0))
+        return path
+
+    def test_the_payload_is_compared_not_the_container(
+        self, home: FakeSystem, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        before = self._wrapped(tmp_path / "a.sav", 12400)
+        after = self._wrapped(tmp_path / "b.sav", 8000)
+
+        assert run("diff", str(before), str(after), "--was", "12400", "--now", "8000") == 0
+        out = capsys.readouterr().out
+        assert "gzip" in out, "it should say which layers it peeled off"
+        assert "0x30:int32-le: 12400 → 8000" in out
+        assert "of 256" in out, "the size of the payload, not of the compressed file"
+
+    def test_the_candidate_is_printed_ready_to_paste(
+        self, home: FakeSystem, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        before = self._wrapped(tmp_path / "a.sav", 12400)
+        after = self._wrapped(tmp_path / "b.sav", 8000)
+        run("diff", str(before), str(after), "--was", "12400", "--now", "8000")
+        out = capsys.readouterr().out
+        assert "savesmith poke" in out
+        assert "(also uint32-le)" in out, "the other reading is mentioned, not listed twice"

@@ -21,7 +21,7 @@ from __future__ import annotations
 import struct
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Protocol
 
 from savesmith.core import fields as field_access
 from savesmith.core.fields import PathStep
@@ -65,6 +65,41 @@ def layout_for(encoding: str) -> str:
     return layouts[encoding]
 
 
+class _Reading(Protocol):
+    """Anything that says "this number, at this offset, stored this way".
+
+    Read-only properties rather than plain attributes: the classes that satisfy
+    this are frozen dataclasses, and a protocol asking for a settable attribute
+    would exclude every one of them.
+    """
+
+    @property
+    def offset(self) -> int: ...
+
+    @property
+    def encoding(self) -> str: ...
+
+
+def group_by_bytes[T: _Reading](readings: Sequence[T]) -> list[tuple[T, tuple[str, ...]]]:
+    """Collapse readings that are literally the same bytes.
+
+    ``int32-le`` and ``uint32-le`` at one offset are four bytes read two ways,
+    not two candidates, and listing both doubles the work of whoever has to
+    pick one. Different widths stay apart: four bytes and eight bytes really
+    are different readings of the file.
+
+    Returns each surviving reading with the names of the ones it stands for.
+    """
+    grouped: dict[tuple[int, int], list[T]] = {}
+    for reading in readings:
+        width = struct.calcsize(layout_for(reading.encoding))
+        grouped.setdefault((reading.offset, width), []).append(reading)
+    return [
+        (same[0], tuple(other.encoding for other in same[1:]))
+        for _key, same in sorted(grouped.items())
+    ]
+
+
 @dataclass(frozen=True)
 class ValueSite:
     """A place in a file where a number is stored, and how."""
@@ -90,8 +125,13 @@ class FieldGuess:
     def size(self) -> int:
         return struct.calcsize(dict(_NUMERIC_FORMATS)[self.encoding])
 
+    @property
+    def address(self) -> str:
+        """The same form ``search`` prints and ``poke`` accepts."""
+        return f"0x{self.offset:X}:{self.encoding}"
+
     def __str__(self) -> str:
-        return f"0x{self.offset:X} ({self.encoding}): {_plain(self.before)} → {_plain(self.after)}"
+        return f"{self.address}: {_plain(self.before)} → {_plain(self.after)}"
 
 
 @dataclass(frozen=True)

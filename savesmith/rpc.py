@@ -48,7 +48,7 @@ from savesmith.core.risk import Acknowledgement, RiskDatabase, assess
 from savesmith.core.session import EditSession
 from savesmith.core.steam import SteamInstall
 from savesmith.core.store import PluginStore
-from savesmith.core.wine import scan_prefixes
+from savesmith.core.wine import machine_for, scan_prefixes
 
 PROTOCOL = "2.0"
 
@@ -206,9 +206,12 @@ class Server:
 
     def _find_saves(self, params: dict[str, Any], _notify: Notify) -> dict[str, Any]:
         folder = Path(_require(params, "folder"))
+        # A game inside a Wine bottle keeps its saves inside that bottle.
+        system, bottle = machine_for(folder, self.system)
         game = examine(folder)
-        found = find_saves(game, self.system)
+        found = find_saves(game, system)
         return {
+            "bottle": bottle,
             "game": {
                 "title": game.title,
                 "engine": game.engine.value,

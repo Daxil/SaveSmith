@@ -346,25 +346,19 @@ def _search_bytes(payload: bytes, wanted: float, *, encoding: str | None = None)
             f"Expected one of: {', '.join(compare.ENCODINGS)}."
         )
 
-    grouped: dict[tuple[int, int], list[compare.ValueSite]] = {}
-    for site in compare.find_value(payload, wanted):
-        if encoding is not None and site.encoding != encoding:
-            continue
-        width = struct.calcsize(compare.layout_for(site.encoding))
-        grouped.setdefault((site.offset, width), []).append(site)
-
-    sites: list[Site] = []
-    for (offset, _width), same_bytes in sorted(grouped.items())[:_MAX_REPORTED]:
-        primary = same_bytes[0]
-        others = [item.encoding for item in same_bytes[1:]]
-        sites.append(
-            Site(
-                address=f"0x{offset:X}:{primary.encoding}",
-                value=primary.value,
-                context=("also " + ", ".join(others)) if others else "",
-            )
+    found = [
+        site
+        for site in compare.find_value(payload, wanted)
+        if encoding is None or site.encoding == encoding
+    ]
+    return [
+        Site(
+            address=f"0x{primary.offset:X}:{primary.encoding}",
+            value=primary.value,
+            context=("also " + ", ".join(others)) if others else "",
         )
-    return sites
+        for primary, others in compare.group_by_bytes(found)[:_MAX_REPORTED]
+    ]
 
 
 def _as_bytes(value: Any) -> bytes:

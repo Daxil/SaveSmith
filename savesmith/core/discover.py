@@ -423,7 +423,7 @@ def main(argv: list[str] | None = None) -> int:
     import sys
 
     from savesmith.core.paths import RealSystem
-    from savesmith.core.wine import is_prefix, scan_prefixes
+    from savesmith.core.wine import machine_for
 
     arguments = sys.argv[1:] if argv is None else argv
     if not arguments:
@@ -437,30 +437,15 @@ def main(argv: list[str] | None = None) -> int:
             print(f"{folder}: not a folder")
             continue
 
-        system: SystemFacade = host
-        bottle = _bottle_containing(folder)
-        if bottle is not None:
-            nearby = scan_prefixes(host, [bottle.parent])
-            prefix = next((p for p in nearby if p.path == bottle), None)
-            if prefix is None and is_prefix(bottle):
-                prefix = next(iter(scan_prefixes(host, [bottle])), None)
-            if prefix is not None and prefix.users:
-                system = prefix.system(prefix.users[0])
-                print(f"(inside the Windows bottle {prefix.name})")
+        system, note = machine_for(folder, host)
+        if note:
+            print(f"({note})")
 
         game = examine(folder)
         for line in find_saves(game, system).explain():
             print(line)
         print()
     return 0
-
-
-def _bottle_containing(folder: Path) -> Path | None:
-    """Walk up looking for a drive_c, so a game inside a bottle just works."""
-    for parent in [folder, *folder.parents]:
-        if parent.name == "drive_c" and (parent.parent / "drive_c").is_dir():
-            return parent.parent
-    return None
 
 
 def _candidate_files(folder: Path, budget: int, *, strict: bool = False) -> list[Path]:

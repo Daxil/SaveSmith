@@ -123,7 +123,15 @@ class TestWhatIsBlocked:
         )
         result = run(source, payload=b"")
         assert result.ok
-        leaked = set(result.value or []) - {"PATH", "PYTHONIOENCODING", "LC_CTYPE"}
+        # SYSTEMROOT is passed deliberately: Windows cannot start a process
+        # without it. It names a directory every program on the machine already
+        # knows, and carries nothing of ours.
+        leaked = set(result.value or []) - {
+            "PATH",
+            "PYTHONIOENCODING",
+            "LC_CTYPE",
+            "SYSTEMROOT",
+        }
         # Whatever the interpreter adds for locale is fine; nothing of ours is.
         assert "ANTHROPIC_API_KEY" not in leaked
         assert "HTTPS_PROXY" not in leaked

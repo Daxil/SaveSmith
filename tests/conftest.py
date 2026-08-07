@@ -9,12 +9,15 @@ users report as "SaveSmith cannot find my saves".
 
 from __future__ import annotations
 
+import plistlib
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from savesmith.core.paths import FakeSystem, KnownFolder, RegistryHive
 from savesmith.core.platform_ import Platform, current_platform
+from savesmith.core.playerprefs import REG_BINARY, REG_DWORD
 
 
 def pytest_collection_modifyitems(
@@ -52,6 +55,40 @@ def never_reach_a_model(monkeypatch: pytest.MonkeyPatch) -> None:
 def _make(*paths: Path) -> None:
     for path in paths:
         path.mkdir(parents=True, exist_ok=True)
+
+
+def seed_player_prefs(system: FakeSystem, company: str, product: str, **values: Any) -> None:
+    """Put Unity settings where *this* machine keeps them.
+
+    The two platforms could not be less alike — the registry on Windows, a
+    binary property list on macOS — and a test that writes a plist passes on a
+    Mac and fails on a Windows runner for reasons that have nothing to do with
+    what it is checking. Seeding through the platform's own storage means the
+    same test exercises the real path on both.
+
+    The Windows side mangles the names the way Unity does: ``coins`` is stored
+    as ``coins_h1234567890``, and recovering the plain name from that is
+    precisely what the code under test has to get right.
+    """
+    if system.platform is Platform.WINDOWS:
+        key = f"Software\\{company}\\{product}"
+        for index, (name, value) in enumerate(values.items(), start=1):
+            data, kind = _as_registry_value(value)
+            system.registry[(RegistryHive.HKCU, key, f"{name}_h{index}0000000")] = data
+            system.registry_types[(RegistryHive.HKCU, key, f"{name}_h{index}0000000")] = kind
+        return
+
+    folder = system.home() / "Library" / "Preferences"
+    folder.mkdir(parents=True, exist_ok=True)
+    with (folder / f"unity.{company}.{product}.plist").open("wb") as handle:
+        plistlib.dump(dict(values), handle, fmt=plistlib.FMT_BINARY)
+
+
+def _as_registry_value(value: Any) -> tuple[Any, int]:
+    """The shape Unity leaves in the registry: words for numbers, bytes for text."""
+    if isinstance(value, bool | int):
+        return int(value), REG_DWORD
+    return str(value).encode("utf-8") + b"\x00", REG_BINARY
 
 
 @pytest.fixture

@@ -298,5 +298,8 @@ class TestAwkwardPaths:
             encoding="utf-8",
         )
         scan = SteamInstall(root).scan()
-        listed = [str(library.path) for library in scan.libraries]
+        # The separator in the printed path is the host's, not the file's:
+        # the same library reads as D:\NotHere\SteamLibrary on Windows and
+        # D:/NotHere/SteamLibrary on a Mac. The parts are what was parsed.
+        listed = [str(library.path).replace("\\", "/") for library in scan.libraries]
         assert any("NotHere/SteamLibrary" in path for path in listed)

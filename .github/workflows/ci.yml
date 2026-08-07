@@ -14,6 +14,9 @@ jobs:
   test:
     name: ${{ matrix.label }}
     runs-on: ${{ matrix.os }}
+    # A job that never starts is worse than one that fails: it hangs the whole
+    # run with nothing to read. This bounds the ones that do start.
+    timeout-minutes: 30
     strategy:
       # Windows-only breakage must not hide a macOS failure, and the reverse.
       fail-fast: false
@@ -21,9 +24,12 @@ jobs:
         include:
           - os: windows-latest
             label: Windows
-          - os: macos-14
+          # macos-13 was retired outright and macos-14 is deprecated; a job
+          # asking for a runner that no longer exists queues until it times
+          # out, which reads as "CI is stuck" rather than as a broken label.
+          - os: macos-15
             label: macOS arm64
-          - os: macos-13
+          - os: macos-15-intel
             label: macOS x86_64
     steps:
       - uses: actions/checkout@v4

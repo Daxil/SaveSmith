@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from savesmith.core import compare
 from savesmith.core.compare import (
     compare_bytes,
     compare_structures,
@@ -220,3 +221,47 @@ class TestNumbersFromACommandLine:
         struct.pack_into("<i", after, 0x200, 111)
         guesses = narrow(bytes(before), bytes(after), 999.0, 111.0)
         assert {guess.offset for guess in guesses} == {0x200}
+
+
+class TestGroupingReadings:
+    """The same bytes read two ways are one candidate, not two."""
+
+    def test_signed_and_unsigned_at_one_offset_collapse(self) -> None:
+        readings = [
+            compare.ValueSite(offset=0x40, encoding="int32-le", value=5),
+            compare.ValueSite(offset=0x40, encoding="uint32-le", value=5),
+        ]
+        grouped = compare.group_by_bytes(readings)
+        assert len(grouped) == 1
+        primary, others = grouped[0]
+        assert primary.encoding == "int32-le"
+        assert others == ("uint32-le",)
+
+    def test_different_widths_stay_apart(self) -> None:
+        readings = [
+            compare.ValueSite(offset=0x40, encoding="int32-le", value=5),
+            compare.ValueSite(offset=0x40, encoding="int16-le", value=5),
+        ]
+        assert len(compare.group_by_bytes(readings)) == 2
+
+    def test_different_offsets_stay_apart(self) -> None:
+        readings = [
+            compare.ValueSite(offset=0x40, encoding="int32-le", value=5),
+            compare.ValueSite(offset=0x80, encoding="int32-le", value=5),
+        ]
+        assert [primary.offset for primary, _ in compare.group_by_bytes(readings)] == [0x40, 0x80]
+
+    def test_it_works_on_guesses_too(self) -> None:
+        """diff and search collapse the same way because it is the same code."""
+        guesses = [
+            compare.FieldGuess(offset=0x10, encoding="int32-le", before=1, after=2),
+            compare.FieldGuess(offset=0x10, encoding="uint32-le", before=1, after=2),
+        ]
+        grouped = compare.group_by_bytes(guesses)
+        assert len(grouped) == 1
+        assert grouped[0][0].address == "0x10:int32-le"
+
+    def test_the_address_is_what_poke_accepts(self) -> None:
+        guess = compare.FieldGuess(offset=0x1F4C, encoding="uint32-le", before=1, after=2)
+        assert guess.address == "0x1F4C:uint32-le"
+        assert str(guess).startswith("0x1F4C:uint32-le:")
