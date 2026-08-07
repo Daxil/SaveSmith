@@ -16,6 +16,8 @@ import pytest
 
 from savesmith import cli
 from savesmith.core.errors import SaveSmithError
+from savesmith.core.paths import FakeSystem
+from savesmith.core.store import PluginStore
 
 MANIFEST: dict[str, Any] = {
     "id": "cli-test-game",
@@ -32,18 +34,20 @@ MANIFEST: dict[str, Any] = {
 }
 
 
-@pytest.fixture
-def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """A machine of our own, so the tests never touch the real one."""
-    fake_home = tmp_path / "home"
-    (fake_home / "Library" / "Application Support").mkdir(parents=True)
-    monkeypatch.setattr(Path, "home", classmethod(lambda cls: fake_home))
-    return fake_home
+MACHINE: list[FakeSystem] = []
 
 
 @pytest.fixture
-def plugin_installed(home: Path) -> Path:
-    folder = home / "Library" / "Application Support" / "SaveSmith" / "plugins" / "cli-test-game"
+def home(fake_machine: FakeSystem) -> FakeSystem:
+    """The machine every command in this file runs against."""
+    MACHINE.clear()
+    MACHINE.append(fake_machine)
+    return fake_machine
+
+
+@pytest.fixture
+def plugin_installed(home: FakeSystem) -> Path:
+    folder = PluginStore.for_system(home).root / "cli-test-game"
     folder.mkdir(parents=True)
     (folder / "manifest.json").write_text(json.dumps(MANIFEST), encoding="utf-8")
     return folder
@@ -57,7 +61,7 @@ def save(tmp_path: Path) -> Path:
 
 
 def run(*argv: str) -> int:
-    return cli.main(list(argv))
+    return cli.main(list(argv), system=MACHINE[0] if MACHINE else None)
 
 
 class TestBasics:
@@ -86,7 +90,7 @@ class TestBasics:
         assert "crc32-le" in capsys.readouterr().out
 
     def test_plugins_lists_the_bundled_ones(
-        self, home: Path, capsys: pytest.CaptureFixture[str]
+        self, home: FakeSystem, capsys: pytest.CaptureFixture[str]
     ) -> None:
         assert run("plugins") == 0
         assert "the-invincible" in capsys.readouterr().out
@@ -103,13 +107,13 @@ class TestErrorsAreHuman:
         assert "Error" not in captured.err.split("\n")[0]
 
     def test_an_unknown_plugin_name(
-        self, home: Path, save: Path, capsys: pytest.CaptureFixture[str]
+        self, home: FakeSystem, save: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         assert run("show", str(save), "--plugin", "no-such-plugin") == 1
         assert "no plugin called" in capsys.readouterr().err
 
     def test_a_save_nothing_can_read(
-        self, home: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+        self, home: FakeSystem, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         blob = tmp_path / "noise.bin"
         blob.write_bytes(bytes(range(256)) * 16)
@@ -117,7 +121,11 @@ class TestErrorsAreHuman:
         assert "discover" in capsys.readouterr().err
 
     def test_an_invented_acknowledgement_lists_the_real_ones(
-        self, home: Path, plugin_installed: Path, save: Path, capsys: pytest.CaptureFixture[str]
+        self,
+        home: FakeSystem,
+        plugin_installed: Path,
+        save: Path,
+        capsys: pytest.CaptureFixture[str],
     ) -> None:
         assert run("set", str(save), "gold", "500", "--yes", "whatever") == 1
         assert "ban_risk" in capsys.readouterr().err
@@ -133,7 +141,11 @@ class TestErrorsAreHuman:
 
 class TestShowAndSet:
     def test_show_lists_fields_and_values(
-        self, home: Path, plugin_installed: Path, save: Path, capsys: pytest.CaptureFixture[str]
+        self,
+        home: FakeSystem,
+        plugin_installed: Path,
+        save: Path,
+        capsys: pytest.CaptureFixture[str],
     ) -> None:
         assert run("show", str(save)) == 0
         out = capsys.readouterr().out
@@ -141,19 +153,31 @@ class TestShowAndSet:
         assert "100" in out
 
     def test_show_marks_achievement_fields(
-        self, home: Path, plugin_installed: Path, save: Path, capsys: pytest.CaptureFixture[str]
+        self,
+        home: FakeSystem,
+        plugin_installed: Path,
+        save: Path,
+        capsys: pytest.CaptureFixture[str],
     ) -> None:
         run("show", str(save))
         assert "achievement" in capsys.readouterr().out
 
     def test_show_uses_the_chosen_language(
-        self, home: Path, plugin_installed: Path, save: Path, capsys: pytest.CaptureFixture[str]
+        self,
+        home: FakeSystem,
+        plugin_installed: Path,
+        save: Path,
+        capsys: pytest.CaptureFixture[str],
     ) -> None:
         run("--language", "ru", "show", str(save))
         assert "Золото" in capsys.readouterr().out
 
     def test_a_dry_run_writes_nothing(
-        self, home: Path, plugin_installed: Path, save: Path, capsys: pytest.CaptureFixture[str]
+        self,
+        home: FakeSystem,
+        plugin_installed: Path,
+        save: Path,
+        capsys: pytest.CaptureFixture[str],
     ) -> None:
         before = save.read_bytes()
         assert run("set", str(save), "gold", "500", "--dry-run") == 0
@@ -161,14 +185,22 @@ class TestShowAndSet:
         assert "nothing was written" in capsys.readouterr().out
 
     def test_setting_a_value_writes_and_backs_up(
-        self, home: Path, plugin_installed: Path, save: Path, capsys: pytest.CaptureFixture[str]
+        self,
+        home: FakeSystem,
+        plugin_installed: Path,
+        save: Path,
+        capsys: pytest.CaptureFixture[str],
     ) -> None:
         assert run("set", str(save), "gold", "500") == 0
         assert json.loads(gzip.decompress(save.read_bytes()))["gold"] == 500
         assert "Backup:" in capsys.readouterr().out
 
     def test_an_achievement_field_needs_confirming(
-        self, home: Path, plugin_installed: Path, save: Path, capsys: pytest.CaptureFixture[str]
+        self,
+        home: FakeSystem,
+        plugin_installed: Path,
+        save: Path,
+        capsys: pytest.CaptureFixture[str],
     ) -> None:
         assert run("set", str(save), "kills", "999") == 1
         assert "achievement" in capsys.readouterr().err
@@ -176,7 +208,11 @@ class TestShowAndSet:
         assert run("set", str(save), "kills", "999", "--yes", "achievements") == 0
 
     def test_a_value_out_of_range_is_refused_before_anything_is_written(
-        self, home: Path, plugin_installed: Path, save: Path, capsys: pytest.CaptureFixture[str]
+        self,
+        home: FakeSystem,
+        plugin_installed: Path,
+        save: Path,
+        capsys: pytest.CaptureFixture[str],
     ) -> None:
         before = save.read_bytes()
         assert run("set", str(save), "gold", "-5") == 1
@@ -186,7 +222,11 @@ class TestShowAndSet:
 
 class TestBackups:
     def test_listing_and_restoring(
-        self, home: Path, plugin_installed: Path, save: Path, capsys: pytest.CaptureFixture[str]
+        self,
+        home: FakeSystem,
+        plugin_installed: Path,
+        save: Path,
+        capsys: pytest.CaptureFixture[str],
     ) -> None:
         original = save.read_bytes()
         run("set", str(save), "gold", "500")
@@ -198,12 +238,16 @@ class TestBackups:
         assert run("backups", "cli-test-game", "--restore", "0") == 0
         assert save.read_bytes() == original
 
-    def test_nothing_to_list(self, home: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    def test_nothing_to_list(self, home: FakeSystem, capsys: pytest.CaptureFixture[str]) -> None:
         assert run("backups", "never-used") == 1
         assert "No backups" in capsys.readouterr().out
 
     def test_restoring_a_number_that_is_not_there(
-        self, home: Path, plugin_installed: Path, save: Path, capsys: pytest.CaptureFixture[str]
+        self,
+        home: FakeSystem,
+        plugin_installed: Path,
+        save: Path,
+        capsys: pytest.CaptureFixture[str],
     ) -> None:
         run("set", str(save), "gold", "500")
         capsys.readouterr()
@@ -212,7 +256,11 @@ class TestBackups:
 
 class TestPluginManagement:
     def test_export_then_install_elsewhere(
-        self, home: Path, plugin_installed: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+        self,
+        home: FakeSystem,
+        plugin_installed: Path,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
     ) -> None:
         target = tmp_path / "exported.zip"
         assert run("plugins", "--export", "cli-test-game", "--output", str(target)) == 0
@@ -223,14 +271,14 @@ class TestPluginManagement:
         assert "installed cli-test-game" in capsys.readouterr().out
 
     def test_removing_something_absent(
-        self, home: Path, capsys: pytest.CaptureFixture[str]
+        self, home: FakeSystem, capsys: pytest.CaptureFixture[str]
     ) -> None:
         assert run("plugins", "--remove", "not-installed") == 0
         assert "nothing to remove" in capsys.readouterr().out
 
     def test_verify_runs_the_gate(
         self,
-        home: Path,
+        home: FakeSystem,
         plugin_installed: Path,
         tmp_path: Path,
         save: Path,
@@ -245,7 +293,7 @@ class TestPluginManagement:
 
 class TestDiscovery:
     def test_discover_on_a_known_format(
-        self, home: Path, save: Path, capsys: pytest.CaptureFixture[str]
+        self, home: FakeSystem, save: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         assert run("discover", str(save)) == 0
         out = capsys.readouterr().out
@@ -253,7 +301,7 @@ class TestDiscovery:
         assert "round_trip" in out
 
     def test_discover_writes_a_draft_manifest(
-        self, home: Path, save: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+        self, home: FakeSystem, save: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         target = tmp_path / "draft.json"
         assert run("discover", str(save), "--draft", "new-game", "--output", str(target)) == 0
@@ -288,3 +336,52 @@ def test_a_bug_is_not_disguised_as_a_user_error(monkeypatch: pytest.MonkeyPatch)
 def test_savesmith_errors_carry_a_sentence() -> None:
     error = SaveSmithError("Something went wrong.")
     assert error.user_message.endswith(".")
+
+
+class TestDiff:
+    def test_two_decodable_saves_are_compared_by_field(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        before = tmp_path / "before.dat"
+        after = tmp_path / "after.dat"
+        before.write_bytes(gzip.compress(json.dumps({"gold": 100}).encode(), mtime=0))
+        after.write_bytes(gzip.compress(json.dumps({"gold": 70}).encode(), mtime=0))
+
+        assert run("diff", str(before), str(after)) == 0
+        assert "gold: 100 → 70" in capsys.readouterr().out
+
+    def test_identical_saves_report_nothing(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        path = tmp_path / "a.dat"
+        path.write_bytes(gzip.compress(json.dumps({"gold": 1}).encode(), mtime=0))
+        assert run("diff", str(path), str(path)) == 1
+
+    def test_opaque_saves_need_the_numbers(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        import struct
+
+        body = bytearray(b"\x11\x22\x33\x44" * 512)
+        struct.pack_into("<i", body, 0x100, 12400)
+        before = tmp_path / "a.sav"
+        before.write_bytes(bytes(body))
+        struct.pack_into("<i", body, 0x100, 7300)
+        after = tmp_path / "b.sav"
+        after.write_bytes(bytes(body))
+
+        assert run("diff", str(before), str(after)) == 1
+        assert "--was and --now" in capsys.readouterr().out
+
+        assert run("diff", str(before), str(after), "--was", "12400", "--now", "7300") == 0
+        assert "0x100" in capsys.readouterr().out
+
+    def test_saves_of_different_sizes(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        first = tmp_path / "a.sav"
+        second = tmp_path / "b.sav"
+        first.write_bytes(bytes(range(256)) * 4)
+        second.write_bytes(bytes(range(256)) * 8)
+        assert run("diff", str(first), str(second)) == 1
+        assert "different sizes" in capsys.readouterr().out

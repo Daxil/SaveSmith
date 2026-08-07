@@ -161,8 +161,17 @@ def find_value(raw: bytes, value: float, *, limit: int = _TOO_COMMON) -> list[Va
     """
     sites: list[ValueSite] = []
     for encoding, layout in _NUMERIC_FORMATS:
+        # A number typed on a command line arrives as a float, and struct
+        # refuses a float for an integer format. Without this, "--was 12400"
+        # would quietly search only the floating-point encodings and find
+        # nothing — which is exactly the shape of a bug nobody reports.
+        wanted: float | int = value
+        if layout[-1] not in "fd":
+            if float(value) != int(value):
+                continue  # not a whole number, so no integer encoding fits
+            wanted = int(value)
         try:
-            needle = struct.pack(layout, value)
+            needle = struct.pack(layout, wanted)
         except (struct.error, OverflowError, ValueError):
             continue  # the number does not fit this encoding
         if len(needle) == 1 and len(raw) > 1024:

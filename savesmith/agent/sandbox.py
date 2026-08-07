@@ -19,7 +19,6 @@ never sees the user's save folder, only the bytes handed to it.
 from __future__ import annotations
 
 import json
-import resource
 import subprocess
 import sys
 import tempfile
@@ -29,6 +28,14 @@ from typing import Any
 
 from savesmith.core.errors import SaveSmithError
 from savesmith.core.platform_ import Platform, current_platform
+
+try:
+    # POSIX only. Importing this at the top level would make the whole module —
+    # and everything that imports it — unusable on Windows, where the wall
+    # clock timeout does the job instead.
+    import resource
+except ImportError:  # pragma: no cover - Windows
+    resource = None  # type: ignore[assignment]
 
 DEFAULT_TIMEOUT = 10.0
 DEFAULT_MEMORY_MB = 512
@@ -127,7 +134,7 @@ def memory_limit_enforced() -> bool:
     memory ceiling. Saying so is better than implying a guarantee that is not
     there.
     """
-    return current_platform() is Platform.LINUX
+    return resource is not None and current_platform() is Platform.LINUX
 
 
 def _apply_limits(limits: Limits) -> None:  # pragma: no cover - runs in the child
@@ -138,6 +145,8 @@ def _apply_limits(limits: Limits) -> None:  # pragma: no cover - runs in the chi
     codec at all. Whatever cannot be set is covered by the wall-clock timeout,
     which every platform honours.
     """
+    if resource is None:  # pragma: no cover - Windows never reaches here
+        return
     memory = limits.memory_mb * 1024 * 1024
     file_size = limits.file_size_mb * 1024 * 1024
     cpu = max(1, int(limits.timeout_seconds) + 1)
@@ -184,8 +193,10 @@ def run(
                 capture_output=True,
                 timeout=limits.timeout_seconds,
                 # An empty environment: no proxies, no tokens, no PYTHONPATH
-                # pointing somewhere unexpected.
-                env={"PATH": "", "PYTHONIOENCODING": "utf-8"},
+                # pointing somewhere unexpected. SYSTEMROOT is the exception —
+                # Windows cannot start a process without it, and it names a
+                # directory rather than carrying anything of ours.
+                env=_minimal_environment(),
                 preexec_fn=(lambda: _apply_limits(limits)) if supports_rlimit else None,
                 check=False,
                 stdin=subprocess.DEVNULL,
@@ -266,6 +277,19 @@ except BaseException as exc:
 with open("result.json", "w", encoding="utf-8") as handle:
     json.dump(result, handle)
 '''
+
+
+def _minimal_environment() -> dict[str, str]:
+    environment = {"PATH": "", "PYTHONIOENCODING": "utf-8"}
+    if current_platform() is Platform.WINDOWS:
+        import os
+
+        for name in ("SYSTEMROOT", "SystemRoot"):
+            value = os.environ.get(name)
+            if value:
+                environment["SYSTEMROOT"] = value
+                break
+    return environment
 
 
 def _clip(raw: bytes, limit: int) -> str:

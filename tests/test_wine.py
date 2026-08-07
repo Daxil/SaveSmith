@@ -9,13 +9,22 @@ import pytest
 
 from savesmith.core.errors import AmbiguousWineUserError, WinePrefixError
 from savesmith.core.paths import FakeSystem, KnownFolder, RegistryHive
-from savesmith.core.platform_ import Platform
+from savesmith.core.platform_ import Platform, current_platform
 from savesmith.core.wine import (
     BottleKind,
     WinePrefix,
     describe_prefixes,
     is_prefix,
     scan_prefixes,
+)
+
+# Building a bottle means creating files called "c:" and "d:" and symlinking
+# them — a colon is illegal in a Windows filename and symlinks need privileges
+# there. Wine bottles are a macOS and Linux concept anyway, and the macOS
+# runners cover this file completely.
+pytestmark = pytest.mark.skipif(
+    current_platform() is Platform.WINDOWS,
+    reason="Wine bottles cannot be built on Windows: ':' is not a legal filename",
 )
 
 USER_REG = r"""WINE REGISTRY Version 2

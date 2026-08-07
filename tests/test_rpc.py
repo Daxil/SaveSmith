@@ -10,7 +10,8 @@ from typing import Any
 
 import pytest
 
-from savesmith.core.paths import RealSystem
+from savesmith.core.paths import FakeSystem
+from savesmith.core.store import PluginStore
 from savesmith.rpc import (
     INTERNAL_ERROR,
     INVALID_PARAMS,
@@ -43,20 +44,17 @@ MANIFEST: dict[str, Any] = {
 
 
 @pytest.fixture
-def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    fake_home = tmp_path / "home"
-    (fake_home / "Library" / "Application Support").mkdir(parents=True)
-    monkeypatch.setattr(Path, "home", classmethod(lambda cls: fake_home))
-    plugins = fake_home / "Library" / "Application Support" / "SaveSmith" / "plugins"
-    folder = plugins / str(MANIFEST["id"])
+def home(fake_machine: FakeSystem) -> FakeSystem:
+    """A machine of our own, on whatever platform this is running."""
+    folder = PluginStore.for_system(fake_machine).root / str(MANIFEST["id"])
     folder.mkdir(parents=True)
     (folder / "manifest.json").write_text(json.dumps(MANIFEST), encoding="utf-8")
-    return fake_home
+    return fake_machine
 
 
 @pytest.fixture
-def server(home: Path) -> Server:
-    return Server(system=RealSystem())
+def server(home: FakeSystem) -> Server:
+    return Server(system=home)
 
 
 @pytest.fixture

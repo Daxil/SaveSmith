@@ -19,7 +19,7 @@ from pathlib import Path
 
 from savesmith.agent.discovery import discover as run_discovery
 from savesmith.core import checksum as checksum_module
-from savesmith.core import detect, diagnostics
+from savesmith.core import compare, detect, diagnostics
 from savesmith.core.backup import BackupStore
 from savesmith.core.discover import examine, find_saves
 from savesmith.core.errors import SaveSmithError
@@ -35,14 +35,16 @@ from savesmith.core.wine import scan_prefixes
 PROGRAM = "savesmith"
 
 
-def main(argv: Sequence[str] | None = None) -> int:
+def main(argv: Sequence[str] | None = None, system: SystemFacade | None = None) -> int:
+    """``system`` is injectable for the same reason everything else here is:
+    so tests never touch the real machine, on any platform."""
     parser = _parser()
     arguments = parser.parse_args(argv)
     if not getattr(arguments, "handler", None):
         parser.print_help()
         return 2
 
-    system = RealSystem()
+    system = system or RealSystem()
     try:
         return int(arguments.handler(arguments, system))
     except SaveSmithError as error:
@@ -138,6 +140,64 @@ def _cmd_discover(arguments: argparse.Namespace, system: SystemFacade) -> int:
         target.write_text(json.dumps(draft, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
         print(f"\nDraft manifest written to {target}")
     return 0 if result.solved else 1
+
+
+def _cmd_diff(arguments: argparse.Namespace, _system: SystemFacade) -> int:
+    """Find a field by watching it change between two saves.
+
+    The workflow this exists for: save, note the number, spend some, save
+    again. Two files and two numbers pin a field down that no amount of
+    staring at a hex dump would.
+    """
+    before_raw = _read(Path(arguments.before))
+    after_raw = _read(Path(arguments.after))
+
+    before_report = detect.identify(before_raw, max_depth=3)
+    after_report = detect.identify(after_raw, max_depth=3)
+
+    if before_report.solved and after_report.solved:
+        assert before_report.best is not None and after_report.best is not None
+        before = before_report.best.pipeline.decode(before_raw).value
+        after = after_report.best.pipeline.decode(after_raw).value
+        changes = compare.compare_structures(before, after)
+        numeric = compare.numeric_changes(changes)
+
+        print(f"Format: {before_report.best.description}")
+        print(f"{len(changes)} value(s) changed, {len(numeric)} of them numbers\n")
+        for change in (numeric if arguments.numbers_only else changes):
+            print(f"  {change}")
+        return 0 if changes else 1
+
+    print("Neither save could be decoded, so comparing bytes.\n")
+    if len(before_raw) != len(after_raw):
+        print(
+            f"The two files are different sizes ({len(before_raw)} and {len(after_raw)} "
+            f"bytes), so their bytes cannot be lined up."
+        )
+        return 1
+
+    byte_diff = compare.compare_bytes(before_raw, after_raw)
+    print(byte_diff.summary())
+    for start, length in byte_diff.ranges[:20]:
+        print(f"  0x{start:X} … 0x{start + length:X}  ({length} bytes)")
+
+    if arguments.was is None or arguments.now is None:
+        print(
+            "\nTell SaveSmith the number that changed with --was and --now, and it will "
+            "say exactly where it lives."
+        )
+        return 1
+
+    guesses = compare.guesses_in_ranges(
+        compare.narrow(before_raw, after_raw, arguments.was, arguments.now), byte_diff
+    )
+    if not guesses:
+        print(f"\nNo place holds {arguments.was:g} before and {arguments.now:g} after.")
+        return 1
+    print(f"\n{len(guesses)} candidate field(s):")
+    for guess in guesses:
+        print(f"  {guess}")
+    return 0
 
 
 def _cmd_show(arguments: argparse.Namespace, system: SystemFacade) -> int:
@@ -365,6 +425,18 @@ def _parser() -> argparse.ArgumentParser:
     discover.add_argument("--draft", metavar="PLUGIN_ID", help="write a draft plugin manifest")
     discover.add_argument("--output", help="where to write the draft")
     discover.set_defaults(handler=_cmd_discover)
+
+    diff = subparsers.add_parser(
+        "diff", help="find a field by comparing two saves"
+    )
+    diff.add_argument("before")
+    diff.add_argument("after")
+    diff.add_argument("--was", type=float, help="the value before, if you know it")
+    diff.add_argument("--now", type=float, help="the value after")
+    diff.add_argument(
+        "--numbers-only", action="store_true", help="hide changes that are not numbers"
+    )
+    diff.set_defaults(handler=_cmd_diff)
 
     show = subparsers.add_parser("show", help="list what can be edited in a save")
     _add_save_arguments(show)

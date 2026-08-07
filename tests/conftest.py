@@ -76,6 +76,34 @@ def windows_system(tmp_path: Path) -> FakeSystem:
 
 
 @pytest.fixture
+def fake_machine(tmp_path: Path) -> FakeSystem:
+    """A machine of our own, whatever platform the tests are running on.
+
+    Patching ``Path.home()`` is not enough: on Windows the application's data
+    folder comes from ``SHGetKnownFolderPath``, so a test that only patched the
+    home directory would quietly write into the real ``AppData``.
+    """
+    home = tmp_path / "machine"
+    if current_platform() is Platform.WINDOWS:
+        appdata = home / "AppData"
+        known = {
+            KnownFolder.PROFILE: home,
+            KnownFolder.LOCAL_APPDATA: appdata / "Local",
+            KnownFolder.ROAMING_APPDATA: appdata / "Roaming",
+            KnownFolder.LOCAL_APPDATA_LOW: appdata / "LocalLow",
+            KnownFolder.DOCUMENTS: home / "Documents",
+            KnownFolder.SAVED_GAMES: home / "Saved Games",
+        }
+        _make(*known.values())
+        return FakeSystem(
+            platform=Platform.WINDOWS, home_dir=home, known_folders=known, user="tester"
+        )
+
+    _make(home / "Library" / "Application Support")
+    return FakeSystem(platform=current_platform(), home_dir=home, user="tester")
+
+
+@pytest.fixture
 def macos_system(tmp_path: Path) -> FakeSystem:
     """A macOS machine with the usual Library layout."""
     home = tmp_path / "Users" / "danil"

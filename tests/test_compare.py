@@ -197,3 +197,26 @@ class TestRealSaves:
         pipeline = Pipeline.from_manifest([{"op": "gvas"}])
         value = pipeline.decode((CORPUS / "ComicsSave.sav").read_bytes()).value
         assert compare_structures(value, value) == []
+
+
+class TestNumbersFromACommandLine:
+    def test_a_whole_number_given_as_a_float_still_finds_integers(self) -> None:
+        """--was 12400 arrives as 12400.0; struct refuses a float for '<i'."""
+        blob = bytearray(b"\x00" * 4096)
+        struct.pack_into("<i", blob, 0x100, 12400)
+        encodings = {site.encoding for site in find_value(bytes(blob), 12400.0)}
+        assert "int32-le" in encodings
+
+    def test_a_fractional_number_only_matches_floats(self) -> None:
+        blob = bytearray(b"\x00" * 4096)
+        struct.pack_into("<f", blob, 0x100, 2.5)
+        encodings = {site.encoding for site in find_value(bytes(blob), 2.5)}
+        assert encodings and all("float" in name for name in encodings)
+
+    def test_narrowing_works_with_floats_from_the_command_line(self) -> None:
+        before = bytearray(b"\x00" * 4096)
+        struct.pack_into("<i", before, 0x200, 999)
+        after = bytearray(before)
+        struct.pack_into("<i", after, 0x200, 111)
+        guesses = narrow(bytes(before), bytes(after), 999.0, 111.0)
+        assert {guess.offset for guess in guesses} == {0x200}
