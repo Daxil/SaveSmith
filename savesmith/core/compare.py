@@ -53,6 +53,17 @@ _NUMERIC_FORMATS: tuple[tuple[str, str], ...] = (
 # numbers like 1 or 100 appear everywhere in a large file.
 _TOO_COMMON = 5000
 
+ENCODINGS: tuple[str, ...] = tuple(name for name, _ in _NUMERIC_FORMATS)
+"""Every way a number can be stored that SaveSmith knows how to find."""
+
+
+def layout_for(encoding: str) -> str:
+    """The struct format behind one of :data:`ENCODINGS`."""
+    layouts = dict(_NUMERIC_FORMATS)
+    if encoding not in layouts:
+        raise ValueError(f"unknown encoding {encoding!r}; expected one of {', '.join(ENCODINGS)}")
+    return layouts[encoding]
+
 
 @dataclass(frozen=True)
 class ValueSite:

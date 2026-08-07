@@ -644,3 +644,80 @@ class TestPointingAtAGameFolder:
 
         assert run("show", str(game)) == 1
         assert "savesmith prefs" in capsys.readouterr().err
+
+
+class TestSearchAndPoke:
+    """The workflow for a game nobody has written a plugin for."""
+
+    def test_search_reports_where_the_number_lives(
+        self, home: FakeSystem, save: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        assert run("search", str(save), "100") == 0
+        out = capsys.readouterr().out
+        assert "gold = 100" in out
+        assert "savesmith poke" in out, "it should say what to do next"
+
+    def test_search_finds_nothing_and_suggests_the_diff(
+        self, home: FakeSystem, save: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        assert run("search", str(save), "777") == 1
+        assert "savesmith diff" in capsys.readouterr().out
+
+    def test_poke_refuses_until_the_warning_is_acknowledged(
+        self, home: FakeSystem, save: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        before = save.read_bytes()
+        assert run("poke", str(save), "gold", "500") == 1
+        assert save.read_bytes() == before
+        assert "--yes" in capsys.readouterr().out
+
+    def test_poke_writes_and_backs_up(
+        self, home: FakeSystem, save: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        assert run("poke", str(save), "gold", "500", "--yes") == 0
+        assert json.loads(gzip.decompress(save.read_bytes()))["gold"] == 500
+        assert "Backup:" in capsys.readouterr().out
+
+    def test_a_dry_run_proves_it_rebuilds_and_writes_nothing(
+        self, home: FakeSystem, save: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        before = save.read_bytes()
+        assert run("poke", str(save), "gold", "500", "--dry-run") == 0
+        assert save.read_bytes() == before
+        assert "does rebuild" in capsys.readouterr().out
+
+    def test_poke_needs_no_plugin_at_all(
+        self, home: FakeSystem, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """The whole point: no plugin is installed in this test."""
+        import struct
+
+        body = bytearray(b"\x00" * 128)
+        struct.pack_into("<i", body, 0x20, 12400)
+        path = tmp_path / "slot.bin"
+        path.write_bytes(bytes(body))
+
+        assert run("search", str(path), "12400") == 0
+        assert "0x20:int32-le" in capsys.readouterr().out
+        assert run("poke", str(path), "0x20:int32-le", "99999", "--yes") == 0
+        assert struct.unpack_from("<i", path.read_bytes(), 0x20)[0] == 99999
+
+    def test_a_bad_address_is_explained(
+        self, home: FakeSystem, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        path = tmp_path / "slot.bin"
+        path.write_bytes(b"\x00" * 128)
+        assert run("poke", str(path), "0x20", "1", "--yes") == 1
+        assert "0x1F4C:uint32" in capsys.readouterr().err
+
+    def test_search_accepts_a_game_folder(
+        self, home: FakeSystem, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        game = tmp_path / "Folder Game"
+        saves = game / "www" / "save"
+        saves.mkdir(parents=True)
+        (saves / "file1.rpgsave").write_bytes(
+            gzip.compress(json.dumps({"gold": 12400}).encode(), mtime=0)
+        )
+        assert run("search", str(game), "12400") == 0
+        assert "gold = 12400" in capsys.readouterr().out

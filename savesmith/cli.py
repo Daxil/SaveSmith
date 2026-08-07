@@ -21,7 +21,7 @@ from typing import Any
 from savesmith.agent.discovery import discover as run_discovery
 from savesmith.agent.writer import DEFAULT_MODEL
 from savesmith.core import checksum as checksum_module
-from savesmith.core import compare, detect, diagnostics, playerprefs
+from savesmith.core import compare, detect, diagnostics, direct, playerprefs
 from savesmith.core.backup import BackupStore
 from savesmith.core.discover import Discovery, GameFolder, examine, find_saves
 from savesmith.core.errors import SaveSmithError
@@ -222,6 +222,109 @@ def _cmd_diff(arguments: argparse.Namespace, _system: SystemFacade) -> int:
     for guess in guesses:
         print(f"  {guess}")
     return 0
+
+
+def _cmd_search(arguments: argparse.Namespace, system: SystemFacade) -> int:
+    """Where does this number live in this save?
+
+    The workflow for a game with no plugin: look at the screen, type the number
+    you can see, and get back every place it is stored.
+    """
+    target = _one_save(arguments, system)
+    save = direct.DirectSave.open(target)
+    sites = save.search(arguments.value)
+
+    print(f"{target.name}: {save.description}")
+    if not sites:
+        print(f"\n{_plain(arguments.value)} is not stored anywhere in this save.")
+        print(
+            "If the game shows it rounded or scaled, try the exact figure. If it is "
+            "still not there, 'savesmith diff' with two saves finds it by watching it change."
+        )
+        return 1
+
+    print(f"\n{len(sites)} place(s) hold {_plain(arguments.value)}:\n")
+    for site in sites[:40]:
+        print(f"  {site}")
+    if len(sites) > 40:
+        print(f"  … and {len(sites) - 40} more")
+    if len(sites) > 1:
+        print(
+            "\nSeveral places hold this number, and only you know which one is the "
+            "one on screen. Save again after it changes and run 'savesmith diff' to "
+            "narrow it down, or try the change and check in-game."
+        )
+    print(f"\nChange one with: savesmith poke {_quote(target)} <address> <new value> --yes")
+    return 0
+
+
+def _cmd_poke(arguments: argparse.Namespace, system: SystemFacade) -> int:
+    """Change one number in a save that has no plugin.
+
+    Blunter than ``set``: there is no field description, no risk tier and no
+    range to check against, because nobody has written any of that down for
+    this game yet. What there is: a backup, and a check that the change
+    survived being rebuilt.
+    """
+    target = _one_save(arguments, system)
+    save = direct.DirectSave.open(target)
+    before, after = save.change(arguments.address, arguments.value)
+
+    print(f"{target.name}: {save.description}")
+    print(f"{arguments.address}: {before!r} → {after!r}")
+
+    if arguments.dry_run:
+        save.rebuild()  # prove it can be put back together, then throw it away
+        print("\nDry run: nothing was written. The save does rebuild with this change.")
+        return 0
+
+    if not arguments.yes:
+        print(
+            "\nNot written. This game has no plugin, so SaveSmith cannot tell you "
+            "what this number does, whether it feeds an achievement, or whether the "
+            "game will accept it. Add --yes once you have read that sentence."
+        )
+        return 1
+
+    backup = save.write(BackupStore.for_system(system))
+    print(f"\nWritten. Backup: {backup.folder}")
+    return 0
+
+
+def _one_save(arguments: argparse.Namespace, system: SystemFacade) -> Path:
+    """A save file, whether the user named one or pointed at a game folder."""
+    target = Path(arguments.file).expanduser()
+    if not target.is_dir():
+        return target
+    game = examine(target)
+    found = find_saves(game, system)
+    if not found.saves:
+        raise SaveSmithError(_nothing_editable(game, found))
+    slot = arguments.slot
+    if slot is None and len(found.saves) > 1:
+        listing = "\n".join(
+            f"  {index}. {save.path.name}  ({save.format}, {save.size} bytes)"
+            for index, save in enumerate(found.saves[:20], start=1)
+        )
+        raise SaveSmithError(
+            f"{game.title} has {len(found.saves)} save files:\n{listing}\n\n"
+            f"Choose one with --slot, or name the file directly."
+        )
+    index = (slot or 1) - 1
+    if not 0 <= index < len(found.saves):
+        raise SaveSmithError(
+            f"There is no save {slot} here; {game.title} has {len(found.saves)}."
+        )
+    return found.saves[index].path
+
+
+def _quote(path: Path) -> str:
+    text = str(path)
+    return f'"{text}"' if " " in text else text
+
+
+def _plain(number: float) -> str:
+    return str(int(number)) if float(number).is_integer() else str(number)
 
 
 def _cmd_show(arguments: argparse.Namespace, system: SystemFacade) -> int:
@@ -609,6 +712,29 @@ def _parser() -> argparse.ArgumentParser:
         "--numbers-only", action="store_true", help="hide changes that are not numbers"
     )
     diff.set_defaults(handler=_cmd_diff)
+
+    search = subparsers.add_parser(
+        "search", help="find where a number lives in a save with no plugin"
+    )
+    search.add_argument("file", help="a save file, or the game's install folder")
+    search.add_argument("value", type=float, help="the number you can see in the game")
+    search.add_argument("--slot", type=int, metavar="N", help="which save, if there are several")
+    search.set_defaults(handler=_cmd_search)
+
+    poke = subparsers.add_parser(
+        "poke", help="change a number in a save with no plugin, by address"
+    )
+    poke.add_argument("file", help="a save file, or the game's install folder")
+    poke.add_argument("address", help="a path, or an offset such as 0x1F4C:uint32")
+    poke.add_argument("value", type=float)
+    poke.add_argument("--slot", type=int, metavar="N", help="which save, if there are several")
+    poke.add_argument("--dry-run", action="store_true", help="show the change, write nothing")
+    poke.add_argument(
+        "--yes",
+        action="store_true",
+        help="confirm that nothing is known about this game or this number",
+    )
+    poke.set_defaults(handler=_cmd_poke)
 
     show = subparsers.add_parser("show", help="list what can be edited in a save")
     _add_save_arguments(show)

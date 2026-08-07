@@ -7,9 +7,12 @@ added.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from savesmith.agent.sandbox import SandboxError
+from savesmith.core.direct import AddressError, NoFormatError
 from savesmith.core.errors import (
     AmbiguousWineUserError,
     BackupError,
@@ -54,6 +57,8 @@ SAMPLES: list[SaveSmithError] = [
     SandboxError("it did not finish within 10 seconds", detail="timeout"),
     PluginInstallError("shared-game", "it is not a readable archive."),
     PlayerPrefsError("the settings file is damaged or unreadable", detail="x.plist"),
+    NoFormatError(Path("/games/mystery.sav")),
+    AddressError("The address '0x40' does not say how the number is stored."),
     WinePrefixError("/bottles/hk", "it has no drive_c folder"),
     AmbiguousWineUserError("/bottles/hk", ("danil", "crossover")),
 ]
@@ -83,8 +88,16 @@ def test_user_message_is_human(error: SaveSmithError) -> None:
     assert message, "user_message must not be empty"
     assert message[0].isupper(), f"should read like a sentence: {message!r}"
     assert message.rstrip().endswith((".", "?", "!")), f"should be a sentence: {message!r}"
-    # Symptoms of a developer message leaking into the UI.
-    for leak in ("Traceback", "Exception", "0x", "None", "self."):
+
+    # Symptoms of a developer message leaking into the UI. A hex offset is one
+    # of them almost everywhere — but not when the user typed it: 'savesmith
+    # search' prints addresses like 0x1F4C:uint32 and the user passes them
+    # straight back to 'poke', so for that one family hex is the vocabulary of
+    # the feature rather than a leak.
+    leaks = ["Traceback", "Exception", "None", "self."]
+    if error.code != "bad_address":
+        leaks.append("0x")
+    for leak in leaks:
         assert leak not in message, f"{leak!r} leaked into a user-facing message: {message!r}"
 
 
