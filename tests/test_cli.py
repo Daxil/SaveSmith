@@ -765,3 +765,38 @@ class TestDiffPeelsTheWrappers:
         out = capsys.readouterr().out
         assert "savesmith poke" in out
         assert "(also uint32-le)" in out, "the other reading is mentioned, not listed twice"
+
+
+class TestServingTheWindow:
+    """The window's only way in. If this breaks, the interface has nothing to
+    talk to — and it breaks silently, because nobody runs it by hand."""
+
+    def test_it_answers_on_stdin_and_stdout(
+        self, home: FakeSystem, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        import io
+        import sys
+
+        monkeypatch.setattr(sys, "stdin", io.StringIO('{"jsonrpc":"2.0","id":1,"method":"ping"}\n'))
+
+        assert run("rpc") == 0
+
+        answer = json.loads(capsys.readouterr().out.strip())
+        assert answer["result"]["ok"] is True
+
+    def test_it_uses_the_machine_it_was_given(
+        self, home: FakeSystem, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Otherwise the window would read the real machine while every test
+        and every sandbox thinks it is reading a fake one."""
+        import io
+        import sys
+
+        monkeypatch.setattr(
+            sys, "stdin", io.StringIO('{"jsonrpc":"2.0","id":1,"method":"doctor"}\n')
+        )
+
+        assert run("rpc") == 0
+
+        answer = json.loads(capsys.readouterr().out.strip())
+        assert str(home.home_dir) in answer["result"]["text"]

@@ -240,6 +240,18 @@ def _payload_of(save: direct.DirectSave) -> bytes:
     return save.value if isinstance(save.value, bytes) else save.raw
 
 
+def _cmd_rpc(_arguments: argparse.Namespace, system: SystemFacade) -> int:
+    """Serve JSON-RPC on stdin and stdout, for the window to talk to.
+
+    Deliberately stdio and not a local HTTP port: a port with no authentication
+    is reachable by any page the user has open in a browser, and this process
+    can rewrite save files. A pipe is only reachable by whoever started it.
+    """
+    from savesmith.rpc import Server
+
+    return Server(system=system).serve()
+
+
 def _cmd_search(arguments: argparse.Namespace, system: SystemFacade) -> int:
     """Where does this number live in this save?
 
@@ -761,6 +773,11 @@ def _parser() -> argparse.ArgumentParser:
         "--numbers-only", action="store_true", help="hide changes that are not numbers"
     )
     diff.set_defaults(handler=_cmd_diff)
+
+    rpc_command = subparsers.add_parser(
+        "rpc", help="serve JSON-RPC on stdin and stdout (used by the window)"
+    )
+    rpc_command.set_defaults(handler=_cmd_rpc)
 
     search = subparsers.add_parser(
         "search", help="find where a number lives in a save with no plugin"
