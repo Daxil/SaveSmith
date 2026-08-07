@@ -31,6 +31,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
 
+from savesmith import resources
 from savesmith.core.plugin import Localized, Plugin, RiskTier
 
 _TIER_ORDER: dict[RiskTier, int] = {
@@ -120,7 +121,7 @@ class RiskDatabase:
 
     @classmethod
     def bundled(cls) -> RiskDatabase:
-        return cls.load(Path(__file__).resolve().parent.parent.parent / "plugins" / "risk_db.json")
+        return cls.load(resources.bundled_path("plugins", "risk_db.json"))
 
     def entry(self, appid: int | None) -> Mapping[str, object] | None:
         if appid is None:

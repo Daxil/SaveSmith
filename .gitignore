@@ -19,3 +19,7 @@ htmlcov/
 # Never commit real save files or user data
 /backups/
 *.sav.local
+
+# PyInstaller
+/build/
+/dist/

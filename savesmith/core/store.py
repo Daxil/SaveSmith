@@ -246,7 +246,12 @@ def _as_stream(data: bytes) -> io.BytesIO:
 
 def _check_name(filename: str, plugin: str) -> None:
     path = Path(filename)
-    if path.is_absolute() or ".." in path.parts:
+    # `anchor`, not `is_absolute()`: on Windows a path like "/etc/passwd" has
+    # no drive, so is_absolute() is False while the path is still rooted — and
+    # that is exactly the entry an attacker puts in an archive. A backslash is
+    # also suspicious in its own right, since zip entries use forward slashes.
+    rooted = bool(path.anchor) or filename.startswith(("/", "\\"))
+    if rooted or ".." in path.parts or "\\" in filename:
         raise PluginInstallError(plugin, f"'{filename}' tries to escape the plugin folder")
     if len(path.parts) > 2:
         raise PluginInstallError(plugin, f"'{filename}' is nested deeper than a plugin should be")

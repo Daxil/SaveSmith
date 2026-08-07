@@ -61,3 +61,23 @@ jobs:
       # amount of mocking can confirm.
       - name: Diagnostics smoke
         run: uv run python -m savesmith.core.diagnostics
+
+      # A packaged build fails differently from a source one — missing data
+      # files, imports that only happen for their side effect — so it is built
+      # and run on every platform rather than only before a release.
+      - name: Build the binary
+        run: uv run pyinstaller savesmith.spec --noconfirm --log-level WARN
+
+      - name: The binary works
+        shell: bash
+        run: |
+          BINARY=dist/savesmith
+          [ -f "$BINARY.exe" ] && BINARY="$BINARY.exe"
+          "$BINARY" plugins
+          "$BINARY" identify tests/corpus/unreal-gvas/the-invincible/ComicsSave.sav
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: savesmith-${{ matrix.os }}
+          path: dist/savesmith*
+          if-no-files-found: error

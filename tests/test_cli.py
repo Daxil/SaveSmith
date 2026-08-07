@@ -134,9 +134,9 @@ class TestErrorsAreHuman:
         self, capsys: pytest.CaptureFixture[str]
     ) -> None:
         run("identify", "/definitely/not/here.sav")
-        assert "not/here.sav" not in capsys.readouterr().err
+        assert "here.sav" not in capsys.readouterr().err
         run("-v", "identify", "/definitely/not/here.sav")
-        assert "not/here.sav" in capsys.readouterr().err
+        assert "here.sav" in capsys.readouterr().err
 
 
 class TestShowAndSet:
@@ -385,3 +385,43 @@ class TestDiff:
         second.write_bytes(bytes(range(256)) * 8)
         assert run("diff", str(first), str(second)) == 1
         assert "different sizes" in capsys.readouterr().out
+
+
+class TestShippedResources:
+    """The packaged binary must find its own plugins and risk database."""
+
+    def test_bundled_data_is_found_from_a_source_checkout(self) -> None:
+        from savesmith import resources
+
+        assert (resources.bundled_path("plugins") / "risk_db.json").is_file()
+        assert not resources.is_frozen()
+
+    def test_a_packaged_binary_looks_where_pyinstaller_unpacked(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """sys._MEIPASS is the only place a frozen build's data exists."""
+        import sys
+
+        from savesmith import resources
+
+        monkeypatch.setattr(sys, "frozen", True, raising=False)
+        monkeypatch.setattr(sys, "_MEIPASS", str(tmp_path), raising=False)
+        assert resources.is_frozen()
+        assert resources.root() == tmp_path
+        assert resources.bundled_path("plugins") == tmp_path / "plugins"
+        assert "packaged binary" in resources.describe()
+
+    def test_every_operation_is_listed_for_the_packaged_build(self) -> None:
+        """PyInstaller cannot see an import that exists for its side effect,
+        so each operation module is named in savesmith.spec by hand. This test
+        fails when a new one is added and that list is not updated."""
+        import re
+
+        from savesmith.core import ops
+
+        spec = Path(__file__).parent.parent / "savesmith.spec"
+        listed = set(re.findall(r'"savesmith\.core\.ops\.(\w+)"', spec.read_text()))
+        modules = {
+            operation.decode.__module__.rsplit(".", 1)[-1] for operation in ops.all_operations()
+        }
+        assert modules <= listed, f"add to savesmith.spec: {sorted(modules - listed)}"

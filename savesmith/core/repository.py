@@ -22,6 +22,7 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from savesmith import resources
 from savesmith.core.errors import PluginValidationError, SaveSmithError
 from savesmith.core.pipeline import RoundTrip
 from savesmith.core.plugin import MANIFEST_NAME, Confidence, Plugin
@@ -197,4 +198,4 @@ def bundled() -> PluginRepository:
     the app; until then everything reads them through here, so that move is a
     change of path rather than a change of code.
     """
-    return PluginRepository(Path(__file__).resolve().parent.parent.parent / "plugins")
+    return PluginRepository(resources.bundled_path("plugins"))

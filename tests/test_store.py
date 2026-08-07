@@ -121,11 +121,13 @@ class TestRefusingHostileArchives:
         with pytest.raises(PluginInstallError, match="escape"):
             store.install_archive(data)
 
-    def test_an_absolute_path(self, store: PluginStore) -> None:
+    @pytest.mark.parametrize("name", ["/etc/passwd", "\\\\windows\\\\system32\\\\evil.py"])
+    def test_a_rooted_path(self, store: PluginStore, name: str) -> None:
+        """On Windows "/etc/passwd" is not `is_absolute()`, but it is still rooted."""
         buffer = io.BytesIO()
         with zipfile.ZipFile(buffer, "w") as zipped:
             zipped.writestr("manifest.json", json.dumps(MANIFEST))
-            zipped.writestr("/etc/passwd", "root")
+            zipped.writestr(name, "root")
         with pytest.raises(PluginInstallError, match="escape"):
             store.install_archive(buffer.getvalue())
 
