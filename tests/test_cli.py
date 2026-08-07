@@ -903,6 +903,39 @@ class TestItems:
 
         assert "could mean any of these" in capsys.readouterr().err
 
+    def test_one_thing_that_fits_two_containers_asks_which(
+        self,
+        home: FakeSystem,
+        plugin_installed: Path,
+        save: Path,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """The normal case for a game nobody has written names for.
+
+        A bare id matches every container equally, and "which of these two
+        identical lines did you mean" is not a question anybody can answer.
+        The question is which container, so that is what gets asked.
+        """
+        manifest = json.loads((plugin_installed / "manifest.json").read_text(encoding="utf-8"))
+        manifest["containers"].append(
+            {
+                "id": "chest",
+                "label": {"en": "Chest"},
+                "path": "chest",
+                "shape": "map",
+            }
+        )
+        (plugin_installed / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+        contents = {"gold": 100, "kills": 3, "items": {"1": 2}, "chest": {"4": 1}}
+        save.write_bytes(gzip.compress(json.dumps(contents).encode(), mtime=0))
+
+        assert run("items", str(save), "--give", "9") == 1
+
+        message = capsys.readouterr().err
+        assert "could go in more than one place" in message
+        assert "--container bag" in message
+
     def test_a_thing_nobody_has_heard_of_is_refused(
         self,
         home: FakeSystem,

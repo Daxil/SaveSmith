@@ -625,6 +625,19 @@ def _which_item(
             f"Nothing here is called '{name}'. Run 'savesmith items' without arguments "
             f"to see what there is, or give the game's own number for it."
         )
+
+    # One thing that could go in either of two places is a different question
+    # from two different things, and it has a different answer. It is also the
+    # normal case for a game nobody has written names for, where an id matches
+    # every container equally.
+    if len({entry.id for _, entry in found}) == 1 and len(found) > 1:
+        places = ", ".join(spec.label.get() for spec, _ in found)
+        first = found[0][0].id
+        raise SaveSmithError(
+            f"'{name}' could go in more than one place here: {places}. Nothing was "
+            f"changed. Say which with --container, for example --container {first}."
+        )
+
     if len(found) > 1:
         listing = "\n".join(
             f"  {entry.name}  ({entry.id}, in {spec.label.get()})" for spec, entry in found[:20]
