@@ -3,92 +3,583 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>SaveSmith — редактор сохранений для одиночных игр</title>
+    <title>SaveSmith — редактор сохранений, который разбирает игры сам</title>
     <meta
       name="description"
-      content="Редактор сохранений для одиночных игр. Игры нет в списке? Подключаешь свой ИИ — Claude Code, Codex — и он разбирает формат сам, а правишь ты. Перед любой записью делается копия."
+      content="Редактор сохранений для одиночных игр. Игры нет в списке? Нажимаешь кнопку — программа сама находит твоего ИИ-помощника и разбирает формат. Перед любой записью делает копию."
+    />
+    <meta property="og:title" content="SaveSmith — редактор сохранений, который разбирает игры сам" />
+    <meta
+      property="og:description"
+      content="Нажимаешь кнопку — программа сама разбирает формат незнакомой игры и показывает поля по именам. Windows и macOS, открытый код."
+    />
+    <meta property="og:type" content="website" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23f5b544'/%3E%3Cpath d='M9 21V11h4.5a3.2 3.2 0 010 6.4H9M23 11h-4.6a2.7 2.7 0 000 5.4h1.8a2.7 2.7 0 010 5.4H15' stroke='%230d0f14' stroke-width='2.4' fill='none' stroke-linecap='round'/%3E%3C/svg%3E"
     />
     <style>
       /*
-        One page, no build step, no dependencies. It exists so that a link can
-        be handed to somebody who then presses one button — not so that it can
-        be a website.
+        One file, no build step, no external request. A landing page that pulls
+        a font from another origin renders wrong for whoever is behind a
+        filter — and a fair share of the audience for a save editor is behind
+        one.
       */
       :root {
-        --bg: #17191f;
-        --panel: #1e212a;
-        --line: #2c3040;
-        --text: #e7e9ef;
-        --muted: #99a0b2;
-        --accent: #7cb0f5;
+        --bg: #0d0f14;
+        --panel: #161922;
+        --panel-2: #1c2029;
+        --line: #262c39;
+        --edge: #38404f;
+        --text: #eef0f6;
+        --muted: #8b93a7;
+        --gold: #f5b544;
+        --blue: #7cb0f5;
+        --good: #7ed385;
+        --radius: 14px;
         color-scheme: dark;
       }
+
       * { box-sizing: border-box; }
+      html { scroll-behavior: smooth; }
+
       body {
         margin: 0;
-        padding: 0 20px 80px;
         background: var(--bg);
         color: var(--text);
-        font: 16px/1.6 -apple-system, "Segoe UI", system-ui, sans-serif;
+        font: 17px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+        -webkit-font-smoothing: antialiased;
+        overflow-x: hidden;
       }
-      main { max-width: 720px; margin: 0 auto; }
-      h1 { font-size: 34px; margin: 56px 0 8px; }
-      .lead { font-size: 18px; color: var(--muted); margin: 0 0 32px; }
-      .get {
-        background: var(--panel); border: 1px solid var(--line);
-        border-radius: 12px; padding: 22px; margin-bottom: 14px;
-      }
-      .download {
-        display: inline-block; padding: 14px 26px; border-radius: 8px;
-        background: var(--accent); color: #17191f; font-size: 18px;
-        font-weight: 600; text-decoration: none;
-      }
-      .download:hover { filter: brightness(1.08); }
-      .for-what { color: var(--muted); font-size: 14px; margin: 12px 0 0; }
-      .other { margin-top: 14px; font-size: 14px; }
-      .other summary { color: var(--muted); cursor: pointer; }
-      .other ul { margin: 10px 0 0; padding-left: 20px; }
-      .other a { color: var(--accent); }
-      h2 { font-size: 20px; margin: 40px 0 10px; }
-      /* The one thing on this page most people have not seen anywhere else. */
-      h2.headline {
-        font-size: 24px; margin-top: 48px; padding-top: 24px;
-        border-top: 1px solid var(--line);
-      }
-      details.how { margin: 14px 0 0; }
-      details.how summary { color: var(--accent); cursor: pointer; }
-      details.how pre {
-        background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
-        padding: 12px 14px; overflow-x: auto; font-size: 13px;
-      }
-      .warn {
-        border-left: 3px solid var(--accent); padding: 2px 0 2px 16px;
-        color: var(--muted);
-      }
+
+      .wrap { max-width: 1080px; margin: 0 auto; padding: 0 24px; }
+      a { color: var(--blue); }
       code {
-        background: var(--panel); padding: 2px 6px; border-radius: 4px;
-        font-size: 14px; word-break: break-all;
+        background: var(--panel-2); padding: 2px 6px; border-radius: 5px; font-size: 0.9em;
       }
-      footer { margin-top: 48px; color: var(--muted); font-size: 14px; }
-      footer a { color: var(--accent); }
+
+      /* ---- the top strip ---- */
+
+      .top { display: flex; align-items: center; gap: 14px; padding: 22px 0; font-size: 15px; }
+      .mark {
+        display: flex; align-items: center; gap: 10px;
+        font-weight: 700; font-size: 18px; letter-spacing: -0.01em;
+      }
+      .top nav { margin-left: auto; display: flex; gap: 22px; }
+      .top nav a { color: var(--muted); text-decoration: none; }
+      .top nav a:hover { color: var(--text); }
+      @media (max-width: 700px) { .top nav { display: none; } }
+
+      /* ---- hero ---- */
+
+      .hero { padding: 40px 0 20px; position: relative; }
+      /* A wash of colour behind the headline, so the page has a temperature
+         rather than being a grey document with a button on it. */
+      .hero::before {
+        content: ""; position: absolute; inset: -140px -40% auto -40%; height: 640px;
+        background:
+          radial-gradient(45% 55% at 22% 22%, rgba(245, 181, 68, 0.16), transparent 70%),
+          radial-gradient(45% 55% at 74% 30%, rgba(124, 176, 245, 0.14), transparent 70%);
+        pointer-events: none; z-index: -1;
+      }
+
+      h1 {
+        font-size: clamp(38px, 6.4vw, 66px); line-height: 1.03;
+        letter-spacing: -0.035em; margin: 0 0 20px; max-width: 15ch; font-weight: 800;
+      }
+      h1 em { font-style: normal; color: var(--gold); }
+
+      .lead {
+        font-size: clamp(17px, 2.1vw, 21px); color: var(--muted);
+        max-width: 56ch; margin: 0 0 32px;
+      }
+
+      .actions { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
+      .cta {
+        display: inline-flex; align-items: center; gap: 10px;
+        padding: 16px 30px; border-radius: 12px;
+        background: var(--gold); color: #17140c;
+        font-size: 18px; font-weight: 700; text-decoration: none;
+        transition: transform 120ms ease, filter 120ms ease;
+      }
+      .cta:hover { filter: brightness(1.07); transform: translateY(-1px); }
+      .cta small { font-weight: 600; opacity: 0.72; font-size: 14px; }
+      .secondary { color: var(--muted); text-decoration: none; font-size: 15px; }
+      .secondary:hover { color: var(--text); }
+      .under { color: var(--muted); font-size: 14px; margin: 16px 0 0; }
+
+      /* ---- the window, drawn rather than photographed ---- */
+
+      .shot {
+        margin: 56px 0 0; border-radius: var(--radius);
+        border: 1px solid var(--line); background: var(--panel);
+        overflow: hidden; box-shadow: 0 30px 80px -30px #000c;
+      }
+      .shot svg { display: block; width: 100%; height: auto; }
+
+      /* ---- sections ---- */
+
+      section { padding: 96px 0 0; }
+      .eyebrow {
+        color: var(--gold); font-size: 13px; font-weight: 700;
+        letter-spacing: 0.09em; text-transform: uppercase; margin: 0 0 12px;
+      }
+      h2 {
+        font-size: clamp(27px, 3.6vw, 40px); line-height: 1.12;
+        letter-spacing: -0.025em; margin: 0 0 16px; max-width: 20ch; font-weight: 700;
+      }
+      .says { color: var(--muted); max-width: 62ch; margin: 0 0 14px; }
+      .says strong { color: var(--text); font-weight: 600; }
+
+      .split { display: grid; grid-template-columns: 1fr 1fr; gap: 44px; align-items: center; }
+      @media (max-width: 880px) { .split { grid-template-columns: 1fr; gap: 28px; } }
+
+      /* ---- the run, in the words the program really prints ---- */
+
+      .run {
+        background: var(--panel); border: 1px solid var(--line);
+        border-radius: var(--radius); padding: 20px 22px; font-size: 15px;
+      }
+      .run header {
+        display: flex; align-items: center; gap: 8px; margin-bottom: 16px;
+        color: var(--muted); font-size: 13px;
+      }
+      .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--line); }
+      .run ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 9px; }
+      .run li { color: var(--muted); opacity: 0; animation: appear 0.45s ease forwards; }
+      .run li.on { color: var(--text); }
+      .run li.on::before { content: "→ "; color: var(--blue); }
+      .run li.win { color: var(--good); font-weight: 600; }
+      .run li:nth-child(1) { animation-delay: 0.2s; }
+      .run li:nth-child(2) { animation-delay: 1.0s; }
+      .run li:nth-child(3) { animation-delay: 1.8s; }
+      .run li:nth-child(4) { animation-delay: 2.6s; }
+      .run li:nth-child(5) { animation-delay: 3.4s; }
+      .run li:nth-child(6) { animation-delay: 4.2s; }
+      .run li:nth-child(7) { animation-delay: 5.2s; }
+      @keyframes appear { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; } }
+      /* Somebody who turned animation off is telling us something; a page that
+         only makes sense once it has finished moving is broken for them. */
+      @media (prefers-reduced-motion: reduce) { .run li { animation: none; opacity: 1; } }
+
+      /* ---- cards ---- */
+
+      .cards {
+        display: grid; grid-template-columns: repeat(auto-fit, minmax(268px, 1fr));
+        gap: 18px; margin-top: 36px;
+      }
+      .card {
+        background: var(--panel); border: 1px solid var(--line);
+        border-radius: var(--radius); padding: 24px;
+        transition: border-color 140ms ease, transform 140ms ease;
+      }
+      .card:hover { border-color: var(--edge); transform: translateY(-2px); }
+      .card h3 { margin: 14px 0 8px; font-size: 18px; letter-spacing: -0.01em; }
+      .card p { margin: 0; color: var(--muted); font-size: 15px; }
+      .card .ico { display: block; width: 26px; height: 26px; }
+
+      /* ---- steps ---- */
+
+      .steps { counter-reset: step; display: grid; gap: 18px; margin-top: 36px; }
+      .step {
+        display: grid; grid-template-columns: 44px 1fr; gap: 18px; align-items: start;
+        padding: 22px 24px; background: var(--panel);
+        border: 1px solid var(--line); border-radius: var(--radius);
+      }
+      .step::before {
+        counter-increment: step; content: counter(step);
+        width: 34px; height: 34px; border-radius: 50%;
+        display: grid; place-items: center;
+        background: var(--panel-2); border: 1px solid var(--line);
+        color: var(--gold); font-weight: 700; font-size: 15px;
+      }
+      .step h3 { margin: 4px 0 6px; font-size: 18px; }
+      .step p { margin: 0; color: var(--muted); font-size: 15px; }
+
+      /* ---- the part that is not sales ---- */
+
+      .plain {
+        border: 1px solid var(--line); border-left: 3px solid var(--gold);
+        border-radius: 0 var(--radius) var(--radius) 0;
+        padding: 22px 26px; background: var(--panel); margin-top: 24px;
+      }
+      .plain p { margin: 0 0 12px; color: var(--muted); }
+      .plain p:last-child { margin: 0; }
+      .plain strong { color: var(--text); }
+
+      /* ---- the ask, once more ---- */
+
+      .again { text-align: center; padding: 110px 0 40px; }
+      .again h2 { margin: 0 auto 18px; max-width: none; }
+      .again .says { margin: 0 auto 26px; }
+      .other { margin-top: 24px; font-size: 15px; }
+      .other summary { color: var(--muted); cursor: pointer; }
+      .other ul {
+        list-style: none; margin: 16px auto 0; padding: 0; max-width: 460px;
+        display: grid; gap: 8px; text-align: left;
+      }
+      .other li a {
+        display: block; padding: 11px 16px; border-radius: 10px;
+        background: var(--panel); border: 1px solid var(--line);
+        text-decoration: none; color: var(--text); font-size: 15px;
+      }
+      .other li a:hover { border-color: var(--edge); }
+
+      footer {
+        margin-top: 64px; padding: 28px 0 60px; border-top: 1px solid var(--line);
+        color: var(--muted); font-size: 14px;
+        display: flex; gap: 18px; flex-wrap: wrap; align-items: center;
+      }
+      footer a { color: var(--muted); }
+      footer .right { margin-left: auto; }
     </style>
   </head>
   <body>
-    <main>
-      <h1>SaveSmith</h1>
-      <p class="lead">
-        Редактор сохранений для одиночных игр. А если игры нет в списке — её разберёт
-        твой ИИ-агент, и она появится в программе как своя.
-      </p>
+    <div class="wrap">
+      <div class="top">
+        <div class="mark">
+          <svg width="26" height="26" viewBox="0 0 32 32" aria-hidden="true">
+            <rect width="32" height="32" rx="7" fill="#f5b544" />
+            <path
+              d="M9 21V11h4.5a3.2 3.2 0 010 6.4H9M23 11h-4.6a2.7 2.7 0 000 5.4h1.8a2.7 2.7 0 010 5.4H15"
+              stroke="#0d0f14" stroke-width="2.4" fill="none" stroke-linecap="round"
+            />
+          </svg>
+          <span>SaveSmith</span>
+        </div>
+        <nav>
+          <a href="#ai">Незнакомая игра</a>
+          <a href="#how">Как это работает</a>
+          <a href="#honest">Честно о рисках</a>
+          <a href="https://github.com/Daxil/SaveSmith">GitHub</a>
+        </nav>
+      </div>
 
-      <div class="get">
-        <a class="download" id="download" href="https://github.com/Daxil/SaveSmith/releases/latest">
-          Скачать
+      <header class="hero">
+        <h1>Редактор сохранений, который <em>разбирает игры сам</em></h1>
+        <p class="lead">
+          Открываешь — программа находит твои игры и показывает, что можно поменять:
+          золото, уровень, предметы. А если игры нет в списке, она разберёт её формат
+          сама. Перед любой записью делает копию.
+        </p>
+
+        <div class="actions">
+          <a class="cta" id="download" href="https://github.com/Daxil/SaveSmith/releases/latest">
+            <svg width="19" height="19" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M12 3v12m0 0l-4.5-4.5M12 15l4.5-4.5M4 19h16"
+                    stroke="currentColor" stroke-width="2.2"
+                    stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+            <span>Скачать</span>
+            <small id="for-what"></small>
+          </a>
+          <a class="secondary" href="https://github.com/Daxil/SaveSmith">Исходники на GitHub →</a>
+        </div>
+
+        <p class="under">Windows и macOS · открытый код, MIT · бесплатно и без регистрации</p>
+
+        <!--
+          Drawn, not photographed. A screenshot goes stale the day after it is
+          taken and nobody notices; a schematic is obviously a schematic, and
+          what it shows is what the program shows — a game, its fields, its
+          items, and the sentence about the backup.
+        -->
+        <div class="shot">
+          <svg viewBox="0 0 1000 470" role="img"
+               aria-label="Окно SaveSmith: слева найденные на компьютере игры, справа поля сохранения и сетка предметов">
+            <rect width="1000" height="470" fill="#161922" />
+            <rect x="0" y="0" width="1000" height="44" fill="#1c2029" />
+            <circle cx="24" cy="22" r="6" fill="#e5695f" />
+            <circle cx="44" cy="22" r="6" fill="#f5b544" />
+            <circle cx="64" cy="22" r="6" fill="#7ed385" />
+            <text x="470" y="27" fill="#8b93a7" font-family="system-ui" font-size="13">SaveSmith</text>
+
+            <rect x="24" y="68" width="286" height="378" rx="10" fill="#12151c" stroke="#262c39" />
+            <text x="44" y="96" fill="#8b93a7" font-family="system-ui" font-size="12"
+                  letter-spacing="1.2">НАШЛОСЬ НА КОМПЬЮТЕРЕ</text>
+            <g font-family="system-ui" font-size="14" fill="#eef0f6">
+              <rect x="38" y="110" width="258" height="42" rx="8" fill="#1f2632" stroke="#3d4a63" />
+              <text x="54" y="136">ELDEN RING</text>
+              <rect x="206" y="120" width="78" height="22" rx="11" fill="#3a1f1c" />
+              <text x="215" y="135" font-size="11" fill="#e5695f">высокий риск</text>
+
+              <rect x="38" y="160" width="258" height="42" rx="8" fill="#161a22" />
+              <text x="54" y="186">The Invincible</text>
+              <rect x="230" y="170" width="54" height="22" rx="11" fill="#1c2e22" />
+              <text x="241" y="185" font-size="11" fill="#7ed385">можно</text>
+
+              <rect x="38" y="210" width="258" height="42" rx="8" fill="#161a22" />
+              <text x="54" y="236">Coin Quest</text>
+
+              <rect x="38" y="260" width="258" height="42" rx="8" fill="#161a22" />
+              <text x="54" y="286" fill="#8b93a7">Моя Игра</text>
+              <rect x="196" y="270" width="88" height="22" rx="11" fill="#2a2418" />
+              <text x="205" y="285" font-size="11" fill="#f5b544">нет плагина</text>
+            </g>
+
+            <text x="344" y="96" fill="#8b93a7" font-family="system-ui" font-size="12"
+                  letter-spacing="1.2">ЧТО МОЖНО ПОМЕНЯТЬ</text>
+            <g font-family="system-ui" font-size="14">
+              <text x="344" y="132" fill="#8b93a7">Руны</text>
+              <rect x="700" y="116" width="120" height="28" rx="7" fill="#12151c" stroke="#262c39" />
+              <text x="714" y="135" fill="#eef0f6">999 999</text>
+
+              <text x="344" y="176" fill="#8b93a7">Уровень</text>
+              <rect x="700" y="160" width="120" height="28" rx="7" fill="#12151c" stroke="#262c39" />
+              <text x="714" y="179" fill="#eef0f6">96</text>
+
+              <text x="344" y="220" fill="#8b93a7">Живучесть</text>
+              <rect x="700" y="204" width="120" height="28" rx="7" fill="#12151c" stroke="#262c39" />
+              <text x="714" y="223" fill="#eef0f6">99</text>
+            </g>
+
+            <line x1="344" y1="252" x2="976" y2="252" stroke="#262c39" />
+            <text x="344" y="282" fill="#8b93a7" font-family="system-ui" font-size="12"
+                  letter-spacing="1.2">ИНВЕНТАРЬ</text>
+
+            <g font-family="system-ui">
+              <rect x="344" y="296" width="86" height="98" rx="9" fill="#12151c" stroke="#262c39" />
+              <rect x="366" y="312" width="42" height="42" rx="6" fill="#c64040" />
+              <text x="360" y="374" fill="#eef0f6" font-size="12">Зелье</text>
+              <rect x="374" y="378" width="34" height="15" rx="7" fill="#1c2029" />
+              <text x="381" y="390" fill="#8b93a7" font-size="10">×12</text>
+
+              <rect x="442" y="296" width="86" height="98" rx="9" fill="#12151c" stroke="#262c39" />
+              <rect x="464" y="312" width="42" height="42" rx="6" fill="#40a4c6" />
+              <text x="462" y="374" fill="#eef0f6" font-size="12">Эфир</text>
+
+              <rect x="540" y="296" width="86" height="98" rx="9" fill="#12151c" stroke="#262c39" />
+              <rect x="562" y="312" width="42" height="42" rx="6" fill="#7ec660" />
+              <text x="551" y="374" fill="#eef0f6" font-size="12">Эликсир</text>
+
+              <rect x="638" y="296" width="86" height="98" rx="9" fill="#12151c" stroke="#3d4a63"
+                    stroke-dasharray="4 4" />
+              <text x="654" y="350" fill="#7cb0f5" font-size="12">перетащи</text>
+
+              <rect x="736" y="296" width="86" height="98" rx="9" fill="#12151c" stroke="#262c39" />
+              <rect x="758" y="312" width="42" height="42" rx="6" fill="#a86ec6" />
+              <text x="750" y="374" fill="#eef0f6" font-size="12">Свиток</text>
+            </g>
+
+            <rect x="344" y="414" width="150" height="34" rx="8" fill="#f5b544" />
+            <text x="384" y="436" fill="#17140c" font-family="system-ui" font-size="14"
+                  font-weight="600">Записать</text>
+            <text x="512" y="436" fill="#8b93a7" font-family="system-ui" font-size="13">
+              копия сохранения делается автоматически
+            </text>
+          </svg>
+        </div>
+      </header>
+
+      <section id="ai">
+        <p class="eyebrow">Главное отличие</p>
+        <div class="split">
+          <div>
+            <h2>Твоей игры нет в списке? Она разберёт её сама</h2>
+            <p class="says">
+              Игр — миллион, заранее описать каждую невозможно. Поэтому, встретив
+              незнакомую игру, SaveSmith показывает кнопку — и дальше работает сам.
+            </p>
+            <p class="says">
+              Он находит установленного у тебя ИИ-помощника (Claude Code, Codex), сам
+              пишет ему задание и подбирает разбор файла, показывая каждый шаг.
+              <strong>Тебе не нужно открывать консоль и ничего печатать.</strong>
+            </p>
+            <p class="says">
+              Спросит только одно: какие числа ты видишь в игре. По ним и находится
+              место, где лежит твоё золото, — иначе поля пришлось бы угадывать.
+              Помощник оплачивается твоей подпиской, отдельной оплаты нет.
+            </p>
+          </div>
+
+          <div class="run">
+            <header>
+              <i class="dot"></i><i class="dot"></i><i class="dot"></i>
+              Разбираю «Моя Игра»
+            </header>
+            <ol>
+              <li>Спрашиваю Claude Code…</li>
+              <li class="on">Смотрю, что это за файл…</li>
+              <li class="on">Читаю начало файла…</li>
+              <li class="on">Пробую разобрать…</li>
+              <li class="on">Ищу, где лежит твоё число…</li>
+              <li class="on">Проверяю, что файл собирается обратно…</li>
+              <li class="win">Готово. Золото, уровень и здоровье правятся по именам.</li>
+            </ol>
+          </div>
+        </div>
+      </section>
+
+      <section id="how">
+        <p class="eyebrow">Как это работает</p>
+        <h2>Три шага, и ни одного пути к файлу руками</h2>
+        <div class="steps">
+          <div class="step">
+            <div>
+              <h3>Открываешь программу</h3>
+              <p>
+                Она сама находит установленные игры — Steam, Windows-игры, запущенные на
+                маке через Whisky или CrossOver, обычные приложения. Печатать пути не
+                нужно.
+              </p>
+            </div>
+          </div>
+          <div class="step">
+            <div>
+              <h3>Выбираешь свою</h3>
+              <p>
+                Сохранение программа найдёт сама: игры прячут их в глубине системных
+                папок, и знать про это тебе не обязательно. Файл зашифрован или подписан
+                контрольной суммой — она снимет слои и соберёт обратно.
+              </p>
+            </div>
+          </div>
+          <div class="step">
+            <div>
+              <h3>Меняешь и жмёшь «Записать»</h3>
+              <p>
+                Копия делается до записи, всегда. Вернуть её — одна кнопка. А если игра
+                из тех, где за правку сохранений выдают бан, программа скажет об этом
+                прямо и потребует подтверждения.
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <p class="eyebrow">Что внутри</p>
+        <h2>Сделано так, чтобы не испортить твой прогресс</h2>
+        <div class="cards">
+          <div class="card">
+            <svg class="ico" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M12 3l7 3v6c0 4.4-3 8-7 9-4-1-7-4.6-7-9V6l7-3z"
+                    stroke="#7ed385" stroke-width="1.8" stroke-linejoin="round" />
+              <path d="M9 12l2 2 4-4" stroke="#7ed385" stroke-width="1.8"
+                    stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+            <h3>Копия до каждой записи</h3>
+            <p>
+              Не «по возможности», а по устройству программы: код, который пишет в файл,
+              нельзя вызвать без места, куда положить копию.
+            </p>
+          </div>
+          <div class="card">
+            <svg class="ico" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M12 4l9 16H3l9-16z" stroke="#f5b544" stroke-width="1.8" stroke-linejoin="round" />
+              <path d="M12 10v4M12 17h.01" stroke="#f5b544" stroke-width="1.8" stroke-linecap="round" />
+            </svg>
+            <h3>Честно про риск</h3>
+            <p>
+              Программа смотрит, стоит ли в папке игры анти-чит, и знает про игры, где за
+              правку сейва банят. Незнакомая игра считается требующей осторожности, а не
+              безопасной.
+            </p>
+          </div>
+          <div class="card">
+            <svg class="ico" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <rect x="3" y="3" width="8" height="8" rx="2" stroke="#7cb0f5" stroke-width="1.8" />
+              <rect x="13" y="3" width="8" height="8" rx="2" stroke="#7cb0f5" stroke-width="1.8" />
+              <rect x="3" y="13" width="8" height="8" rx="2" stroke="#7cb0f5" stroke-width="1.8" />
+              <path d="M17 13v8M13 17h8" stroke="#7cb0f5" stroke-width="1.8" stroke-linecap="round" />
+            </svg>
+            <h3>Предметы картинками</h3>
+            <p>
+              Не список номеров, а сетка вещей с иконками и названиями из файлов самой
+              игры. Новую вещь можно перетащить мышкой из общего списка.
+            </p>
+          </div>
+          <div class="card">
+            <svg class="ico" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M4 7h16M4 12h16M4 17h9" stroke="#8b93a7" stroke-width="1.8"
+                    stroke-linecap="round" />
+            </svg>
+            <h3>Форматы, которые знает сам</h3>
+            <p>
+              gzip, zlib, base64, JSON, MessagePack, LZString, GVAS из Unreal Engine,
+              Easy Save 3 из Unity, AES, BND4 и зашифрованные слоты FromSoftware.
+            </p>
+          </div>
+          <div class="card">
+            <svg class="ico" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M7 4h10l3 5-8 11L4 9l3-5z" stroke="#f5b544" stroke-width="1.8"
+                    stroke-linejoin="round" />
+            </svg>
+            <h3>Windows-игры на маке</h3>
+            <p>
+              Whisky, CrossOver, Wineskin. Бутылка определяется сама: игра внутри неё
+              хранит сохранения в своей AppData, а не там, где их ищут остальные.
+            </p>
+          </div>
+          <div class="card">
+            <svg class="ico" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <circle cx="12" cy="12" r="9" stroke="#7ed385" stroke-width="1.8" />
+              <path d="M12 7v10M9 10h6M9 14h6" stroke="#7ed385" stroke-width="1.8"
+                    stroke-linecap="round" />
+            </svg>
+            <h3>Разобрал — поделись</h3>
+            <p>
+              Одна команда отдаёт твоё описание формата проекту, чтобы следующему человеку
+              с этой игрой уже ничего разбирать не пришлось. Само сохранение не
+              отправляется никуда.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section id="honest">
+        <p class="eyebrow">Без прикрас</p>
+        <h2>Что надо знать до того, как что-то менять</h2>
+
+        <div class="plain">
+          <p>
+            <strong>Это для одиночных оффлайн-игр.</strong> Не для онлайна. Правка
+            сохранений часто нарушает пользовательское соглашение игры, и ответственность
+            за последствия — на тебе.
+          </p>
+          <p>
+            <strong>Закрой игру перед правкой.</strong> Многие игры держат сохранение в
+            памяти и, выходя, перезаписывают файл своей версией — правка просто исчезнет.
+          </p>
+          <p>
+            <strong>Система будет ругаться на первом запуске.</strong> У программы нет
+            цифровой подписи: сертификаты стоят денег, которых у проекта пока нет. Ни
+            macOS, ни Windows не умеют отличить «автор не платит $99 в год» от «это
+            вирус». На маке: Системные настройки → Конфиденциальность и безопасность →
+            «Всё равно открыть». На Windows: «Подробнее» → «Выполнить в любом случае».
+          </p>
+          <p>
+            <strong>Когда незнакомую игру разбирает ИИ-помощник</strong>, куски твоего
+            сохранения уходят туда, где этот помощник работает. Программа спрашивает
+            согласия до того, как что-то запустит. Менять файлы помощнику не разрешено —
+            записываешь только ты.
+          </p>
+          <p>
+            SaveSmith трогает только файлы сохранений. Он не читает и не пишет память
+            чужих процессов, не патчит <code>.exe</code>, ничего не внедряет в игру и не
+            отключает защиту. Исходники открыты — верить на слово не обязательно.
+          </p>
+        </div>
+      </section>
+
+      <section class="again">
+        <h2>Попробуй на своей игре</h2>
+        <p class="says">
+          Бесплатно, без регистрации, с открытым кодом. Первое, что программа сделает, —
+          покажет, что нашла у тебя на компьютере.
+        </p>
+        <a class="cta" id="download-2" href="https://github.com/Daxil/SaveSmith/releases/latest">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M12 3v12m0 0l-4.5-4.5M12 15l4.5-4.5M4 19h16"
+                  stroke="currentColor" stroke-width="2.2"
+                  stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+          <span>Скачать</span>
+          <small id="for-what-2"></small>
         </a>
-        <p class="for-what" id="for-what">Определяю, что у тебя за система…</p>
 
         <details class="other">
-          <summary>Другие файлы: другая система, командная строка</summary>
+          <summary>Другая система, или командная строка</summary>
           <ul id="everything">
             <li>
               <a href="https://github.com/Daxil/SaveSmith/releases/latest">
@@ -97,97 +588,25 @@
             </li>
           </ul>
         </details>
-      </div>
-
-      <h2>Что это делает</h2>
-      <p>
-        Открываешь программу — она сама находит установленные игры и показывает списком.
-        Выбираешь свою, и SaveSmith сам ищет сохранение, разбирается в его формате и
-        показывает поля с человеческими названиями: золото, уровень, характеристики,
-        предметы с картинками. Перед любой записью делает копию, откатить можно одной
-        кнопкой.
-      </p>
-
-      <h2 class="headline">А если твоей игры в списке нет — подключи свой ИИ</h2>
-      <p>
-        Игр — миллион, и заранее разобрать каждую невозможно. Поэтому SaveSmith умеет
-        отдавать себя <strong>инструментами твоему ИИ-агенту</strong>: Claude Code,
-        Codex, чему угодно, за что ты уже платишь. Отдельного ключа и отдельной оплаты
-        не нужно.
-      </p>
-      <p>
-        Дальше ты пишешь обычными словами: <em>«разберись, где в моём сейве золото»</em>.
-        Агент смотрит файл и подбирает разбор, пока сохранение не начнёт собираться
-        обратно <strong>байт в байт</strong> — только это считается за понятый формат.
-        Потом ставит тебе плагин, и твоя игра появляется в окне точно так же, как
-        поддерживаемая: с полями, названиями и картинками. Правишь ты, руками.
-      </p>
-      <p class="warn">
-        <strong>Твой ИИ не может менять сохранения — вообще.</strong> Ему дано смотреть
-        и предлагать; записывает только человек. И подтвердить за тебя «понимаю, что за
-        это банят» он тоже не может — это твой аккаунт, а не его.<br /><br />
-        Честно про приватность: когда агент читает сейв, содержимое уходит туда, где
-        этот агент работает. Мы отдаём ему куски файла, а не файл целиком, но решение
-        подключать облачного помощника к своим файлам — твоё.
-      </p>
-      <details class="how">
-        <summary>Как подключить, если у тебя есть Claude Code или Codex</summary>
-        <pre><code>{
-  "mcpServers": {
-    "savesmith": { "command": "&lt;путь к savesmith&gt;", "args": ["mcp"] }
-  }
-}</code></pre>
-        <p class="for-what">
-          Путь — к тому самому файлу командной строки, который скачивается выше.
-        </p>
-      </details>
-
-      <p>
-        Нет никакого ИИ? Тогда старый добрый способ: говоришь программе число, которое
-        видишь на экране игры, и она находит, где оно лежит в файле — даже если файл
-        зашифрован и подписан контрольной суммой.
-      </p>
-      <p>
-        А когда разберёшься — <strong>одна команда отдаёт плагин остальным</strong>,
-        чтобы следующему человеку с этой игрой уже ничего разбирать не пришлось.
-        Сохранение при этом не отправляется никуда: уезжает только описание формата.
-      </p>
-
-      <h2>Первый запуск: система будет ругаться</h2>
-      <p class="warn">
-        У программы нет цифровой подписи — сертификаты стоят денег, которых у проекта
-        пока нет. Ни macOS, ни Windows не умеют отличить «автор не платит $99 в год» от
-        «это вирус», поэтому пугают одинаково.<br /><br />
-        <strong>macOS:</strong> Системные настройки → Конфиденциальность и безопасность →
-        внизу «Всё равно открыть».<br />
-        <strong>Windows:</strong> в окне SmartScreen — «Подробнее» → «Выполнить в любом
-        случае».<br /><br />
-        Исходники открыты, так что верить на слово не обязательно: программу можно
-        собрать самому.
-      </p>
-
-      <h2>О чём надо знать</h2>
-      <p class="warn">
-        Это для одиночных оффлайн-игр, не для онлайна. Правка сохранений часто нарушает
-        пользовательское соглашение игры — ответственность за последствия на тебе.
-        И главное: <strong>закрой игру перед правкой</strong>, иначе она перезапишет файл
-        своей версией и правка исчезнет.
-      </p>
+      </section>
 
       <footer>
-        <a href="https://github.com/Daxil/SaveSmith">Исходники и все релизы на GitHub</a>
-        · MIT
+        <span>SaveSmith · MIT</span>
+        <a href="https://github.com/Daxil/SaveSmith">Исходники</a>
+        <a href="https://github.com/Daxil/SaveSmith/releases">Все версии</a>
+        <a href="https://github.com/Daxil/SaveSmith/issues">Сообщить о проблеме</a>
+        <span class="right">Windows · macOS</span>
       </footer>
-    </main>
+    </div>
 
     <script>
       /*
        * Guess the system, offer one file, and never hide the others.
        *
-       * A guess can be wrong — a Mac browser reporting an Intel platform under
-       * Rosetta, a phone, something unheard of — so the fold below always
-       * lists everything, and the button falls back to the release page rather
-       * than to a file that might not run.
+       * A guess can be wrong — a phone, something unheard of, a Mac under
+       * Rosetta — so the fold at the bottom always lists everything, and the
+       * button falls back to the release page rather than to a file that might
+       * not run.
        */
       const REPO = "https://github.com/Daxil/SaveSmith";
       const LATEST = `${REPO}/releases/latest`;
@@ -199,27 +618,21 @@
         { id: "macos-x64", label: "macOS, Intel", app: "SaveSmith-macos-x64.dmg", cli: "savesmith-macos-x64" },
       ];
 
-      /*
-       * The version is not known to a static page, and the release assets carry
-       * it in their names. Rather than fetch the API — which is rate limited and
-       * would leave the button dead until it answered — the button points at
-       * the release page's "latest" redirect for a *named* asset. GitHub only
-       * serves that when the name matches exactly, so the page asks the API
-       * once, quietly, and falls back to the release page if that fails.
-       */
+      const named = (file, version) =>
+        version ? file.replace(/^(SaveSmith|savesmith)-/, `$1-${version}-`) : null;
+
       function show(build, version) {
-        const button = document.getElementById("download");
-        const caption = document.getElementById("for-what");
-        if (build && version) {
-          const name = build.app.replace("SaveSmith-", `SaveSmith-${version}-`);
-          button.href = asset(name);
-          button.textContent = `Скачать для ${build.label}`;
-          caption.textContent = `Версия ${version}. Не твоя система? Все файлы — ниже.`;
-        } else if (build) {
-          button.textContent = `Скачать для ${build.label}`;
-          caption.textContent = "Открою страницу релиза — файл для твоей системы там первый.";
-        } else {
-          caption.textContent = "Не понял, что у тебя за система. Выбери файл сам.";
+        const pairs = [
+          [document.getElementById("download"), document.getElementById("for-what")],
+          [document.getElementById("download-2"), document.getElementById("for-what-2")],
+        ];
+        for (const [button, caption] of pairs) {
+          if (!build) {
+            caption.textContent = "";
+            continue;
+          }
+          caption.textContent = `для ${build.label}`;
+          if (version) button.href = asset(named(build.app, version));
         }
       }
 
@@ -228,12 +641,9 @@
         list.innerHTML = "";
         for (const build of BUILDS) {
           for (const [kind, file] of [["Окно", build.app], ["Командная строка", build.cli]]) {
-            const named = version
-              ? file.replace(/^(SaveSmith|savesmith)-/, `$1-${version}-`)
-              : null;
             const item = document.createElement("li");
             const link = document.createElement("a");
-            link.href = named ? asset(named) : LATEST;
+            link.href = version ? asset(named(file, version)) : LATEST;
             link.textContent = `${kind} — ${build.label}`;
             item.append(link);
             list.append(item);
@@ -279,7 +689,7 @@
           listEverything(version);
         })
         .catch(() => {
-          /* Rate limited, offline, or no release yet. The button already points
+          /* Rate limited, offline, or no release yet. The buttons already point
              somewhere that works. */
         });
     </script>
