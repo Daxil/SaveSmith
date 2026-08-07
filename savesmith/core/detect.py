@@ -40,6 +40,10 @@ _LADDER: tuple[str, ...] = (
     "gzip",
     "zlib",
     "base64",
+    # RPG Maker MV and MZ, which is most of the indie games on Steam that have
+    # a save worth editing at all. Without it here the ladder calls a
+    # .rpgsave "unknown" while the bundled plugin opens it perfectly well.
+    "lzstring",
     "msgpack",
     "gvas",
     "bnd4",

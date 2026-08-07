@@ -16,6 +16,14 @@ Two operations:
 
 Re-encrypting reproduces the original bytes exactly, because AES with the same
 key, mode and IV is deterministic and PKCS#7 padding has only one valid form.
+
+**Why pycryptodome and not cryptography.** All this needs is AES; PBKDF2 comes
+from the standard library. ``cryptography`` brings OpenSSL with it, and on some
+macOS builds it links to the system copy rather than carrying its own — which
+made the packaged binary die at startup with a missing OpenSSL symbol, on a
+machine where nothing here is even called. pycryptodome carries its own AES and
+links against nothing but libSystem, so there is no version of OpenSSL anywhere
+that can break the build.
 """
 
 from __future__ import annotations
@@ -25,7 +33,7 @@ import hashlib
 from collections.abc import Mapping
 from typing import Any
 
-from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from Crypto.Cipher import AES
 
 from savesmith.core.ops._registry import Hints, Operation, Params, register
 
@@ -82,15 +90,16 @@ def _pad(data: bytes, padding: str) -> bytes:
     return data + bytes([fill]) * fill
 
 
-def _cipher(key: bytes, mode: str, iv: bytes | None) -> Cipher[Any]:
+def _cipher(key: bytes, mode: str, iv: bytes | None) -> Any:
+    """One cipher object, good for exactly one call to encrypt or decrypt."""
     if mode == "ECB":
         # ECB is a poor choice cryptographically, but it is the game's choice
         # and the file has to be read as it was written.
-        return Cipher(algorithms.AES(key), modes.ECB())
+        return AES.new(key, AES.MODE_ECB)
     if mode == "CBC":
         if iv is None or len(iv) != _BLOCK:
             raise ValueError("CBC needs a 16-byte initialisation vector")
-        return Cipher(algorithms.AES(key), modes.CBC(iv))
+        return AES.new(key, AES.MODE_CBC, bytes(iv))
     raise ValueError(f"unsupported AES mode {mode!r}")
 
 
@@ -116,8 +125,7 @@ def _aes_decode(payload: Any, params: Params, hints: Hints) -> bytes:
             f"the encrypted part is {len(raw)} bytes, which is not a whole number of AES blocks"
         )
 
-    decryptor = _cipher(_key_from(params), mode, iv).decryptor()
-    return _unpad(decryptor.update(raw) + decryptor.finalize(), padding)
+    return _unpad(_cipher(_key_from(params), mode, iv).decrypt(raw), padding)
 
 
 def _aes_encode(payload: Any, params: Params, hints: Mapping[str, Any]) -> bytes:
@@ -126,8 +134,9 @@ def _aes_encode(payload: Any, params: Params, hints: Mapping[str, Any]) -> bytes
     padding = str(params.get("padding", "pkcs7")).lower()
     iv = hints.get("iv")
 
-    encryptor = _cipher(_key_from(params), mode, iv).encryptor()
-    body = encryptor.update(_pad(raw, padding)) + encryptor.finalize()
+    # Annotated because the cipher object is untyped: without this the
+    # function would be handing back Any where it promises bytes.
+    body: bytes = _cipher(_key_from(params), mode, iv).encrypt(_pad(raw, padding))
     # The same IV goes back where it came from; a fresh random one would be
     # cryptographically tidier and would also change bytes for no reason.
     return (bytes(iv) + body) if hints.get("iv_from_prefix") and iv else body
@@ -169,8 +178,8 @@ def _es3_decode(payload: Any, params: Params, hints: Hints) -> bytes:
     if password is None:
         raise ValueError("the plugin gives no Easy Save 3 password")
 
-    decryptor = Cipher(algorithms.AES(_es3_key(password, iv)), modes.CBC(iv)).decryptor()
-    return _unpad(decryptor.update(body) + decryptor.finalize(), "pkcs7")
+    cipher = AES.new(_es3_key(password, iv), AES.MODE_CBC, iv)
+    return _unpad(cipher.decrypt(body), "pkcs7")
 
 
 def _es3_encode(payload: Any, params: Params, hints: Mapping[str, Any]) -> bytes:
@@ -179,8 +188,8 @@ def _es3_encode(payload: Any, params: Params, hints: Mapping[str, Any]) -> bytes
     if len(iv) != _BLOCK:
         raise ValueError("the original initialisation vector was not recorded")
     password = str(params.get("password", ""))
-    encryptor = Cipher(algorithms.AES(_es3_key(password, iv)), modes.CBC(iv)).encryptor()
-    return iv + encryptor.update(_pad(raw, "pkcs7")) + encryptor.finalize()
+    cipher = AES.new(_es3_key(password, iv), AES.MODE_CBC, iv)
+    return iv + cipher.encrypt(_pad(raw, "pkcs7"))
 
 
 register(

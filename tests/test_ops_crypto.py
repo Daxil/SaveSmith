@@ -9,7 +9,7 @@ from typing import Any
 
 import msgpack
 import pytest
-from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from Crypto.Cipher import AES
 
 from savesmith.core import ops
 from savesmith.core.pipeline import Pipeline
@@ -25,13 +25,11 @@ def pad(data: bytes) -> bytes:
 
 
 def encrypt_ecb(data: bytes) -> bytes:
-    encryptor = Cipher(algorithms.AES(KEY), modes.ECB()).encryptor()
-    return encryptor.update(pad(data)) + encryptor.finalize()
+    return AES.new(KEY, AES.MODE_ECB).encrypt(pad(data))
 
 
 def encrypt_cbc(data: bytes, iv: bytes) -> bytes:
-    encryptor = Cipher(algorithms.AES(KEY), modes.CBC(iv)).encryptor()
-    return iv + encryptor.update(pad(data)) + encryptor.finalize()
+    return iv + AES.new(KEY, AES.MODE_CBC, iv).encrypt(pad(data))
 
 
 def round_trip(name: str, raw: Any, params: dict[str, Any] | None = None) -> Any:
@@ -102,8 +100,7 @@ class TestAes:
 class TestEasySave3:
     def build(self, password: str, data: bytes, iv: bytes) -> bytes:
         key = hashlib.pbkdf2_hmac("sha1", password.encode(), iv, 100, 16)
-        encryptor = Cipher(algorithms.AES(key), modes.CBC(iv)).encryptor()
-        return iv + encryptor.update(pad(data)) + encryptor.finalize()
+        return iv + AES.new(key, AES.MODE_CBC, iv).encrypt(pad(data))
 
     def test_reading_an_easy_save_3_file(self) -> None:
         raw = self.build("hunter2", PAYLOAD, bytes(range(16)))

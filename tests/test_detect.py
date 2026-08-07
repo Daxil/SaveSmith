@@ -133,3 +133,21 @@ class TestRealFiles:
         for path in sorted(CORPUS.glob("*.sav")):
             report = identify(path.read_bytes(), max_depth=2)
             assert report.solved, f"{path.name}: {report.explain()}"
+
+
+def test_an_rpg_maker_save_is_recognised_without_a_plugin() -> None:
+    """RPG Maker MV and MZ are most of the indie games with a save worth
+    editing, and 'find' calling one of them "unknown" while the bundled plugin
+    opens it perfectly well is the kind of gap a user reads as "not supported"."""
+    import json
+
+    from savesmith.core.ops.lzstring import compress_to_base64
+
+    raw = compress_to_base64(json.dumps({"party": {"_gold": 1250}})).encode("utf-8")
+
+    report = identify(raw)
+
+    assert report.solved
+    assert report.best is not None
+    assert report.best.description == "lzstring → json_parse"
+    assert report.best.round_trip.exact_bytes

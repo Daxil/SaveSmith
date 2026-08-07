@@ -26,7 +26,7 @@ import hashlib
 from collections.abc import Mapping
 from typing import Any
 
-from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from Crypto.Cipher import AES
 
 from savesmith.core.ops._registry import Hints, Operation, Params, register
 
@@ -77,8 +77,7 @@ def _decode(payload: Any, params: Params, hints: Hints) -> bytes:
         raise ValueError("the encrypted part is not a whole number of AES blocks")
 
     iv, body = blob[:_BLOCK], blob[_BLOCK:]
-    decryptor = Cipher(algorithms.AES(key), modes.CBC(iv)).decryptor()
-    plain = decryptor.update(body) + decryptor.finalize()
+    plain = AES.new(key, AES.MODE_CBC, iv).decrypt(body)
     if not _checksum_holds(plain):
         raise ValueError(
             "the slot could not be read: the key does not fit this game's saves, "
@@ -103,8 +102,7 @@ def _encode(payload: Any, params: Params, hints: Mapping[str, Any]) -> bytes:
     iv = bytes(hints.get("iv", b""))
     if key is None or len(iv) != _BLOCK:
         raise ValueError("the key or initialisation vector for this slot was not recorded")
-    encryptor = Cipher(algorithms.AES(key), modes.CBC(iv)).encryptor()
-    return iv + encryptor.update(block) + encryptor.finalize()
+    return iv + AES.new(key, AES.MODE_CBC, iv).encrypt(block)
 
 
 register(

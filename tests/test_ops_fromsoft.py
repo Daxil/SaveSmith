@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 
 import pytest
-from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from Crypto.Cipher import AES
 
 from savesmith.core.errors import PipelineError
 from savesmith.core.pipeline import Pipeline
@@ -25,8 +25,7 @@ def plain_slot(payload: bytes = PAYLOAD) -> bytes:
 def encrypted_slot(payload: bytes = PAYLOAD, key_hex: str = ER_KEY) -> bytes:
     block = plain_slot(payload)
     iv = bytes(range(16))
-    encryptor = Cipher(algorithms.AES(bytes.fromhex(key_hex)), modes.CBC(iv)).encryptor()
-    return iv + encryptor.update(block) + encryptor.finalize()
+    return iv + AES.new(bytes.fromhex(key_hex), AES.MODE_CBC, iv).encrypt(block)
 
 
 def pipeline(key_hex: str | None = ER_KEY) -> Pipeline:

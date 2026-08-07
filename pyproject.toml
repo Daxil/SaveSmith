@@ -5,7 +5,10 @@ description = "Save file editor for offline games, including games no editor exi
 readme = "README.md"
 requires-python = "==3.12.*"
 dependencies = [
-    "cryptography>=50.0.0",
+    # AES only, and it carries its own: cryptography drags OpenSSL along and
+    # links to the system copy on some macOS builds, which killed the packaged
+    # binary at startup.
+    "pycryptodome>=3.20",
     "msgpack>=1.2.1",
 ]
 
