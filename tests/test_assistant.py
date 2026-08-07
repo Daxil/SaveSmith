@@ -214,3 +214,36 @@ class TestThePrompt:
         from savesmith.mcp import Server
 
         assert set(TOOLS) == {tool.name for tool in Server().tools()}
+
+
+class TestSayingWhyItStopped:
+    """A dead button with "it stopped" under it helps nobody.
+
+    Every one of these is something the person can act on, and the first is by
+    far the likeliest failure on a machine that has everything installed.
+    """
+
+    def one(self) -> Assistant:
+        return Assistant(id="claude", name="Claude Code", path=Path("/x/claude"))
+
+    def test_not_logged_in_says_how_to_log_in(self) -> None:
+        why = assistant._why_it_stopped(self.one(), "Not logged in · Please run /login")
+
+        assert "не выполнен вход" in why
+        assert "claude" in why
+
+    def test_a_spent_subscription_says_so_and_offers_the_other_way(self) -> None:
+        why = assistant._why_it_stopped(self.one(), "Your credit balance is too low")
+
+        assert "лимит" in why
+        assert "вручную" in why
+
+    def test_no_network_is_not_reported_as_a_broken_format(self) -> None:
+        why = assistant._why_it_stopped(self.one(), "getaddrinfo ENOTFOUND api.anthropic.com")
+
+        assert "сеть" in why
+
+    def test_anything_else_still_says_nothing_was_changed(self) -> None:
+        why = assistant._why_it_stopped(self.one(), "segmentation fault")
+
+        assert "Ничего не изменено" in why

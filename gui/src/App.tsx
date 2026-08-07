@@ -23,6 +23,7 @@ import {
 import { Updates } from "./Updates";
 import { GameScreen } from "./screens/GameScreen";
 import { Analyse } from "./screens/Analyse";
+import { Backups } from "./screens/Backups";
 import { NumberScreen } from "./screens/NumberScreen";
 import { PickGame } from "./screens/PickGame";
 import { SaveScreen } from "./screens/SaveScreen";
@@ -40,6 +41,8 @@ export function App() {
   const [byNumber, setByNumber] = useState<FoundSave | null>(null);
   // A save whose format nobody has described, about to be worked out for us.
   const [analysing, setAnalysing] = useState<FoundSave | null>(null);
+  // The copies made before every write, for when something went wrong.
+  const [backupsOf, setBackupsOf] = useState<string | null>(null);
   const [failure, setFailure] = useState<Failure>(null);
   const [busy, setBusy] = useState(false);
 
@@ -107,7 +110,24 @@ export function App() {
       )}
 
       <main>
-        {analysing ? (
+        {backupsOf ? (
+          <Backups
+            backend={backend}
+            plugin={backupsOf}
+            onBack={() => setBackupsOf(null)}
+            onRestored={() =>
+              guard(async () => {
+                // The file on disk is a different file now. Anything holding a
+                // copy of what it used to say is out of date, including the
+                // open session, so it is closed rather than left to write the
+                // old contents back over the restored ones.
+                if (session) await backend.close(session.session);
+                setSession(null);
+                if (folder) setFound(await backend.findSaves(folder));
+              })
+            }
+          />
+        ) : analysing ? (
           <Analyse
             backend={backend}
             save={analysing.path}
@@ -143,6 +163,7 @@ export function App() {
               const save = found?.saves.find((item) => item.path === session.path);
               if (save) setByNumber(save);
             }}
+            onBackups={() => setBackupsOf(session.plugin.id)}
             onFailure={(message) => setFailure({ message })}
           />
         ) : found ? (

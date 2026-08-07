@@ -210,12 +210,45 @@ def analyse(
 
     if process.returncode not in (0, None) and not outcome.succeeded:
         stderr = (process.stderr.read() if process.stderr else "") or ""
-        raise AssistantError(
-            f"{assistant.name} stopped without working the format out. Nothing was "
-            f"changed.",
-            detail=stderr.strip()[:2000],
-        )
+        said = "\n".join([stderr, *(event.text for event in outcome.events)])
+        raise AssistantError(_why_it_stopped(assistant, said), detail=stderr.strip()[:2000])
     return outcome
+
+
+# What an assistant says when it will not start, and what a person can do about
+# it. Without this the window shows "stopped without working the format out",
+# which is true, useless, and leaves somebody staring at a dead button —
+# especially for the first of these, which is the single likeliest way this
+# fails on a machine that has everything installed.
+_REASONS = (
+    (
+        ("not logged in", "please run /login", "invalid api key", "authentication"),
+        "{name} установлен, но в него не выполнен вход. Открой терминал, запусти "
+        "{command} и войди — после этого SaveSmith сможет им пользоваться.",
+    ),
+    (
+        ("credit balance", "quota", "rate limit", "usage limit", "exceeded"),
+        "У подписки на {name} закончился лимит. SaveSmith тут ничем не поможет — "
+        "либо подожди, пока лимит обновится, либо разбери сохранение вручную: "
+        "скажи программе число, которое видишь в игре.",
+    ),
+    (
+        ("enotfound", "getaddrinfo", "network", "econnrefused", "connect"),
+        "{name} не смог выйти в сеть. Проверь соединение и попробуй ещё раз — "
+        "ничего не изменено.",
+    ),
+)
+
+
+def _why_it_stopped(assistant: Assistant, said: str) -> str:
+    lowered = said.lower()
+    for markers, message in _REASONS:
+        if any(marker in lowered for marker in markers):
+            return message.format(name=assistant.name, command=assistant.path.name)
+    return (
+        f"{assistant.name} остановился, не разобрав формат. Ничего не изменено. "
+        f"Можно попробовать ещё раз или разобрать сохранение вручную."
+    )
 
 
 def _command(

@@ -276,3 +276,22 @@ details summary { color: var(--muted); cursor: pointer; margin-top: 20px; }
 .steps li.failed { color: var(--bad); }
 .steps li.done { color: var(--good); }
 .analyse .failure { margin-top: 14px; }
+
+/* Getting a save back. Opened by somebody in a hurry, so the rows say which
+   copy is which rather than making them decode timestamps. */
+.backups { display: flex; flex-direction: column; align-items: flex-start; }
+.backup-list { list-style: none; padding: 0; margin: 16px 0; width: 100%; }
+.backup-list li {
+  display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+  padding: 14px 16px; margin-bottom: 8px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+}
+.backup-list .what { display: flex; flex-direction: column; gap: 3px; flex: 1; min-width: 220px; }
+.backup-list .when { display: flex; align-items: center; gap: 8px; }
+.backup-list .meta { color: var(--muted); font-size: 13px; word-break: break-all; }
+.backup-list li > button { margin-left: auto; }
+.backup-list .confirm {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-left: auto;
+}
+.backup-list .confirm span { color: var(--warn); font-size: 14px; }
+.tag.latest { background: #2c3040; color: var(--muted); padding: 1px 8px; border-radius: 999px; font-size: 11px; }

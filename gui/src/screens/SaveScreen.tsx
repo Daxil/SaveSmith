@@ -20,6 +20,7 @@ export function SaveScreen({
   onSession,
   onBack,
   onEverything,
+  onBackups,
   onFailure,
 }: {
   backend: Backend;
@@ -28,6 +29,8 @@ export function SaveScreen({
   onBack: () => void;
   /** Show every value in the file, not only the ones the plugin describes. */
   onEverything: () => void;
+  /** The copies made before each write, and the way back to one. */
+  onBackups: () => void;
   onFailure: (message: string) => void;
 }) {
   const [saved, setSaved] = useState<string | null>(null);
@@ -153,7 +156,17 @@ export function SaveScreen({
           Записать
         </button>
 
-        {saved && <p className="saved">Записано. Копия: {saved}</p>}
+        {saved && (
+          <p className="saved">
+            Записано. Копия сохранения лежит здесь: {saved}
+          </p>
+        )}
+
+        {/* Placed beside the Save button on purpose: the moment somebody wants
+            this is the moment just after pressing that one. */}
+        <button className="everything" onClick={onBackups}>
+          Вернуть сохранение как было
+        </button>
 
         {/* The plugin lists what somebody thought worth naming. The file may
             hold more, and hiding it would be its own kind of dishonesty. */}
