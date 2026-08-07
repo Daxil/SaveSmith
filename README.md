@@ -39,8 +39,8 @@ uv run savesmith identify <файл>             определить форма
 uv run savesmith checksum <файл>             найти контрольную сумму
 uv run savesmith discover <файл>             полный разбор незнакомого формата
 uv run savesmith discover <файл> --model     то же, но с моделью, если не вышло
-uv run savesmith show <сейв>                 что в нём можно править
-uv run savesmith set <сейв> <поле> <знач>    правка с бэкапом
+uv run savesmith show <сейв|папка игры>      что в нём можно править
+uv run savesmith set <сейв|папка> <поле> <знач>  правка с бэкапом
 uv run savesmith backups <плагин>            список и откат
 uv run savesmith plugins                     плагины: список, установка, экспорт
 uv run savesmith verify <плагин> <корпус>    round-trip гейт
@@ -50,6 +50,9 @@ uv run savesmith verify <плагин> <корпус>    round-trip гейт
 из `SHGetKnownFolderPath`, поэтому перенаправление OneDrive не ломает поиск.
 Разбор библиотеки Steam. Бутылки Whisky, CrossOver, Wine и `.app`-обёртки
 Wineskin. По папке игры определяется движок и выводятся места хранения сейвов.
+`show` и `set` тоже принимают папку игры, а не только файл: если читаемый сейв
+один — он и берётся, если несколько — печатается список и нужен `--slot`.
+Угадывать слот программа не станет: не тот слот означает затёртый прогресс.
 
 **Unity PlayerPrefs.** Многие игры на Unity держат прогресс не в файле, а в
 реестре Windows или в plist на macOS. `find` показывает их рядом с сейвами,

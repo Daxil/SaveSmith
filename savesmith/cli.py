@@ -23,7 +23,7 @@ from savesmith.agent.writer import DEFAULT_MODEL
 from savesmith.core import checksum as checksum_module
 from savesmith.core import compare, detect, diagnostics, playerprefs
 from savesmith.core.backup import BackupStore
-from savesmith.core.discover import examine, find_saves
+from savesmith.core.discover import Discovery, GameFolder, examine, find_saves
 from savesmith.core.errors import SaveSmithError
 from savesmith.core.paths import RealSystem, SystemFacade
 from savesmith.core.plugin import Plugin
@@ -399,10 +399,27 @@ def _assess_game(appid: int, install_dir: Path, database: RiskDatabase) -> Asses
     )
 
 
+# How many of a folder's save files are opened to see which plugin reads them.
+# Games with dozens of slots exist; reading all of them to answer "which one"
+# would be slow for no gain.
+_MAX_CANDIDATES = 12
+
+
 def _session(arguments: argparse.Namespace, system: SystemFacade) -> EditSession:
-    path = Path(arguments.file)
-    raw = _read(path)
     store = PluginStore.for_system(system)
+    target = Path(arguments.file).expanduser()
+
+    game = None
+    if target.is_dir():
+        # Pointing at the game's folder is the intended way in: the person
+        # editing a save knows where the game is installed, not where it
+        # decided to hide its saves.
+        game, target = _save_in_folder(target, system, store, slot=arguments.slot)
+        print(f"{game.title}: {target.name}\n")
+    elif arguments.game_folder:
+        game = examine(Path(arguments.game_folder).expanduser())
+
+    raw = _read(target)
 
     if arguments.plugin:
         plugin = store.catalogue().by_id(arguments.plugin)
@@ -417,18 +434,80 @@ def _session(arguments: argparse.Namespace, system: SystemFacade) -> EditSession
             )
         plugin = matches[0]
 
-    game_anticheat: tuple[str, ...] = ()
-    scanned = False
-    if arguments.game_folder:
-        game = examine(Path(arguments.game_folder).expanduser())
-        game_anticheat, scanned = game.anticheat, True
-
     return EditSession.open(
-        path,
+        target,
         plugin,
         database=RiskDatabase.bundled(),
-        anticheat=game_anticheat,
-        anticheat_scanned=scanned,
+        anticheat=game.anticheat if game else (),
+        anticheat_scanned=game is not None,
+    )
+
+
+def _save_in_folder(
+    folder: Path, system: SystemFacade, store: PluginStore, *, slot: int | None
+) -> tuple[GameFolder, Path]:
+    """Turn a game folder into the one save file to edit.
+
+    Refuses to guess between several editable saves. Picking the wrong slot
+    overwrites progress the player wanted to keep, and no amount of "probably
+    the newest one" reasoning is worth that.
+    """
+    game = examine(folder)
+    found = find_saves(game, system)
+    editable = _editable_saves(found, store)
+
+    if not editable:
+        raise SaveSmithError(_nothing_editable(game, found))
+
+    if slot is not None:
+        if not 1 <= slot <= len(editable):
+            raise SaveSmithError(
+                f"There is no save {slot} here; {game.title} has {len(editable)} "
+                f"that SaveSmith can read."
+            )
+        return game, editable[slot - 1][0]
+
+    if len(editable) > 1:
+        listing = "\n".join(
+            f"  {index}. {path.name}  ({plugin.id}, {path.stat().st_size} bytes)"
+            for index, (path, plugin) in enumerate(editable, start=1)
+        )
+        raise SaveSmithError(
+            f"{game.title} has {len(editable)} saves SaveSmith can read:\n{listing}\n\n"
+            f"Choose one with --slot, or name the file directly."
+        )
+    return game, editable[0][0]
+
+
+def _editable_saves(discovery: Discovery, store: PluginStore) -> list[tuple[Path, Plugin]]:
+    """The saves in a folder that some plugin can actually open."""
+    editable: list[tuple[Path, Plugin]] = []
+    for save in discovery.saves[:_MAX_CANDIDATES]:
+        try:
+            raw = save.path.read_bytes()
+        except OSError:
+            continue
+        matches = _match(store, raw)
+        if matches:
+            editable.append((save.path, matches[0]))
+    return editable
+
+
+def _nothing_editable(game: GameFolder, discovery: Discovery) -> str:
+    if discovery.prefs is not None and discovery.prefs.entries:
+        return (
+            f"{game.title} keeps its progress in Unity settings rather than a save file. "
+            f"Use 'savesmith prefs --game-folder \"{game.path}\"' to see and change them."
+        )
+    if discovery.saves:
+        return (
+            f"{len(discovery.saves)} file(s) were found for {game.title}, but no plugin can "
+            f"read any of them. 'savesmith find' lists them, and 'savesmith discover <file>' "
+            f"works a format out."
+        )
+    return (
+        f"No save files were found for {game.title}. 'savesmith find' shows every place "
+        f"that was looked in."
     )
 
 
@@ -585,10 +664,18 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def _add_save_arguments(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("file")
+    parser.add_argument("file", help="a save file, or the game's install folder")
     parser.add_argument("--plugin", help="use this plugin instead of guessing")
     parser.add_argument(
-        "--game-folder", help="the game's install folder, so anti-cheat can be checked"
+        "--slot",
+        type=int,
+        metavar="N",
+        help="which save to use, when the folder holds more than one",
+    )
+    parser.add_argument(
+        "--game-folder",
+        help="the game's install folder, so anti-cheat can be checked "
+        "(not needed when you pointed at the folder already)",
     )
 
 

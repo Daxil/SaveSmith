@@ -529,3 +529,118 @@ class TestPlayerPrefs:
     ) -> None:
         assert run("prefs", "--company", "Nobody", "--product", "Nothing") == 1
         assert "Nothing stored here" in capsys.readouterr().out
+
+
+class TestPointingAtAGameFolder:
+    """The intended way in: a person knows where the game is installed, not
+    where it decided to hide its saves."""
+
+    def _rpgmaker(self, tmp_path: Path, *names: str) -> Path:
+        game = tmp_path / "Folder Game"
+        saves = game / "www" / "save"
+        saves.mkdir(parents=True)
+        for index, name in enumerate(names or ("file1.rpgsave",)):
+            body = json.dumps({"gold": 100 + index, "kills": 3}).encode()
+            (saves / name).write_bytes(gzip.compress(body, mtime=0))
+        return game
+
+    def test_show_accepts_the_game_folder(
+        self,
+        home: FakeSystem,
+        plugin_installed: Path,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        game = self._rpgmaker(tmp_path)
+        assert run("show", str(game)) == 0
+        out = capsys.readouterr().out
+        assert "file1.rpgsave" in out, "it should say which save it opened"
+        assert "Gold" in out and "100" in out
+
+    def test_set_accepts_the_game_folder(
+        self,
+        home: FakeSystem,
+        plugin_installed: Path,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        game = self._rpgmaker(tmp_path)
+        assert run("set", str(game), "gold", "500") == 0
+        assert "Backup" in capsys.readouterr().out
+        edited = game / "www" / "save" / "file1.rpgsave"
+        assert json.loads(gzip.decompress(edited.read_bytes()))["gold"] == 500
+
+    def test_several_saves_are_listed_rather_than_guessed_between(
+        self,
+        home: FakeSystem,
+        plugin_installed: Path,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """Picking the wrong slot overwrites progress somebody wanted to keep."""
+        game = self._rpgmaker(tmp_path, "file1.rpgsave", "file2.rpgsave")
+        assert run("show", str(game)) == 1
+        error = capsys.readouterr().err
+        assert "file1.rpgsave" in error and "file2.rpgsave" in error
+        assert "--slot" in error
+
+    def test_a_slot_chooses_between_them(
+        self,
+        home: FakeSystem,
+        plugin_installed: Path,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        game = self._rpgmaker(tmp_path, "file1.rpgsave", "file2.rpgsave")
+        assert run("show", str(game), "--slot", "2") == 0
+        out = capsys.readouterr().out
+        assert "file2.rpgsave" in out
+        assert "101" in out
+
+    def test_a_slot_that_does_not_exist_says_how_many_there_are(
+        self,
+        home: FakeSystem,
+        plugin_installed: Path,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        game = self._rpgmaker(tmp_path, "file1.rpgsave", "file2.rpgsave")
+        assert run("show", str(game), "--slot", "9") == 1
+        assert "has 2" in capsys.readouterr().err
+
+    def test_a_folder_with_nothing_readable_says_where_to_look_next(
+        self,
+        home: FakeSystem,
+        plugin_installed: Path,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        game = tmp_path / "Empty Game"
+        (game / "www" / "save").mkdir(parents=True)
+        assert run("show", str(game)) == 1
+        error = capsys.readouterr().err
+        assert "No save files were found" in error
+        assert "savesmith find" in error
+
+    def test_a_unity_game_is_sent_to_the_prefs_command(
+        self,
+        home: FakeSystem,
+        plugin_installed: Path,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """Its progress is real, it is just not in a file."""
+        import plistlib
+
+        game = tmp_path / "Coin Quest"
+        (game / "CoinQuest_Data").mkdir(parents=True)
+        (game / "CoinQuest_Data" / "app.info").write_text(
+            "Tiny Studio\nCoin Quest\n", encoding="utf-8"
+        )
+        prefs = home.home_dir / "Library" / "Preferences"
+        prefs.mkdir(parents=True, exist_ok=True)
+        with (prefs / "unity.Tiny Studio.Coin Quest.plist").open("wb") as handle:
+            plistlib.dump({"coins": 250}, handle, fmt=plistlib.FMT_BINARY)
+
+        assert run("show", str(game)) == 1
+        assert "savesmith prefs" in capsys.readouterr().err
