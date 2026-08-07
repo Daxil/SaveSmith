@@ -44,7 +44,7 @@ from savesmith.core.errors import SaveSmithError
 from savesmith.core.paths import RealSystem, SystemFacade
 from savesmith.core.plugin import Plugin
 from savesmith.core.repository import PluginRepository, bundled
-from savesmith.core.risk import Acknowledgement, RiskDatabase
+from savesmith.core.risk import Acknowledgement, RiskDatabase, assess
 from savesmith.core.session import EditSession
 from savesmith.core.steam import SteamInstall
 from savesmith.core.store import PluginStore
@@ -262,6 +262,7 @@ class Server:
         save = direct.DirectSave.open(Path(_require(params, "path")))
         address = str(_require(params, "address"))
         before, after = save.change(address, _require_number(params, "value"))
+        risk = self._risk_of(params.get("game_folder"))
 
         if not params.get("confirmed"):
             raise RpcError(
@@ -271,7 +272,10 @@ class Server:
             )
         if params.get("dry_run"):
             save.rebuild()
-            return {"written": False, "address": address, "before": before, "after": after}
+            return {
+                "written": False, "address": address, "before": before,
+                "after": after, "risk": risk,
+            }
 
         backup = save.write(BackupStore.for_system(self.system))
         return {
@@ -280,6 +284,35 @@ class Server:
             "before": before,
             "after": after,
             "backup": str(backup.folder),
+            "risk": risk,
+        }
+
+    def _risk_of(self, folder: Any) -> dict[str, Any] | None:
+        """What is known about the game a save belongs to, if anything.
+
+        Editing without a plugin skips the risk classifier — there is no plugin
+        to carry a tier. But an interface that knows which folder the game is
+        installed in can still be told what the database says, and it should
+        be: withholding a warning we hold is worse than having none.
+        """
+        if not folder:
+            return None
+        game = examine(Path(str(folder)))
+        if game.steam_appid is None and not game.anticheat:
+            return None
+        assessment = assess(
+            database=RiskDatabase.bundled(),
+            appid=game.steam_appid,
+            anticheat=game.anticheat,
+            anticheat_scanned=True,
+        )
+        return {
+            "tier": assessment.tier.value,
+            "title": assessment.title or game.title,
+            "signals": [
+                {"en": signal.text.get("en"), "ru": signal.text.get("ru")}
+                for signal in assessment.signals
+            ],
         }
 
     def _prefs_read(self, params: dict[str, Any], _notify: Notify) -> dict[str, Any]:

@@ -266,12 +266,13 @@ def _cmd_poke(arguments: argparse.Namespace, system: SystemFacade) -> int:
     this game yet. What there is: a backup, and a check that the change
     survived being rebuilt.
     """
-    target = _one_save(arguments, system)
+    target, game = _one_save_and_game(arguments, system)
     save = direct.DirectSave.open(target)
     before, after = save.change(arguments.address, arguments.value)
 
     print(f"{target.name}: {save.description}")
     print(f"{arguments.address}: {before!r} → {after!r}")
+    _warn_about_the_game(game, arguments.language)
 
     if arguments.dry_run:
         save.rebuild()  # prove it can be put back together, then throw it away
@@ -291,11 +292,38 @@ def _cmd_poke(arguments: argparse.Namespace, system: SystemFacade) -> int:
     return 0
 
 
+def _warn_about_the_game(game: GameFolder | None, language: str) -> None:
+    """What is known about this game, before anything is written.
+
+    Editing without a plugin skips the whole risk classifier, because there is
+    no plugin to carry a tier. But when the player pointed at the game's
+    folder, the game is identified — and the database may well have plenty to
+    say about it. Saying nothing then would be hiding a warning we hold.
+    """
+    if game is None or game.steam_appid is None:
+        return
+    assessment = assess(
+        database=RiskDatabase.bundled(),
+        appid=game.steam_appid,
+        anticheat=game.anticheat,
+        anticheat_scanned=True,
+    )
+    print(f"\nRisk for {assessment.title or game.title}: {assessment.tier.value}")
+    for signal in assessment.signals:
+        print(f"  · {signal.text.get(language)}")
+
+
 def _one_save(arguments: argparse.Namespace, system: SystemFacade) -> Path:
+    return _one_save_and_game(arguments, system)[0]
+
+
+def _one_save_and_game(
+    arguments: argparse.Namespace, system: SystemFacade
+) -> tuple[Path, GameFolder | None]:
     """A save file, whether the user named one or pointed at a game folder."""
     target = Path(arguments.file).expanduser()
     if not target.is_dir():
-        return target
+        return target, None
     game = examine(target)
     found = find_saves(game, system)
     if not found.saves:
@@ -315,7 +343,7 @@ def _one_save(arguments: argparse.Namespace, system: SystemFacade) -> Path:
         raise SaveSmithError(
             f"There is no save {slot} here; {game.title} has {len(found.saves)}."
         )
-    return found.saves[index].path
+    return found.saves[index].path, game
 
 
 def _quote(path: Path) -> str:

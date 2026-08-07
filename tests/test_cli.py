@@ -721,3 +721,28 @@ class TestSearchAndPoke:
         )
         assert run("search", str(game), "12400") == 0
         assert "gold = 12400" in capsys.readouterr().out
+
+    def test_what_is_known_about_the_game_is_shown_before_writing(
+        self, home: FakeSystem, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Editing without a plugin skips the risk classifier — unless the
+        player pointed at the game's folder, in which case we know plenty."""
+        game = tmp_path / "ELDEN RING"
+        saves = game / "www" / "save"
+        saves.mkdir(parents=True)
+        (game / "steam_appid.txt").write_text("1245620", encoding="utf-8")
+        (saves / "file1.rpgsave").write_bytes(
+            gzip.compress(json.dumps({"runes": 12400}).encode(), mtime=0)
+        )
+
+        assert run("poke", str(game), "runes", "99999", "--yes") == 0
+        out = capsys.readouterr().out
+        assert "blocked" in out
+        assert "detect modified saves" in out
+        assert "Easy Anti-Cheat" in out, "and that this build has none"
+
+    def test_a_lone_file_says_nothing_it_does_not_know(
+        self, home: FakeSystem, save: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        run("poke", str(save), "gold", "500", "--yes")
+        assert "Risk for" not in capsys.readouterr().out

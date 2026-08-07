@@ -393,3 +393,26 @@ class TestPlayerPrefsOverTheWire:
         response = call(server, "prefs.read")
         assert response["error"]["code"] == INVALID_PARAMS
         assert "publisher" in response["error"]["message"]
+
+    def test_poke_reports_what_is_known_about_the_game(
+        self, server: Server, tmp_path: Path, save: Path
+    ) -> None:
+        """An interface cannot show a warning it was never handed."""
+        game = tmp_path / "ELDEN RING"
+        game.mkdir()
+        (game / "steam_appid.txt").write_text("1245620", encoding="utf-8")
+
+        result = result_of(
+            server, "poke", path=str(save), address="gold", value=500,
+            confirmed=True, dry_run=True, game_folder=str(game),
+        )
+        assert result["risk"]["tier"] == "blocked"
+        assert result["risk"]["title"] == "ELDEN RING"
+        assert any("detect modified saves" in signal["en"] for signal in result["risk"]["signals"])
+
+    def test_no_folder_means_no_claim_either_way(self, server: Server, save: Path) -> None:
+        result = result_of(
+            server, "poke", path=str(save), address="gold", value=500,
+            confirmed=True, dry_run=True,
+        )
+        assert result["risk"] is None
