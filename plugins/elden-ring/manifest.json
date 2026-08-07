@@ -69,12 +69,15 @@
           "skip": 88
         },
         {
-          "mark": "inventory_held"
-        },
-        {
           "inventory": [
-            2688,
-            384
+            {
+              "name": "held",
+              "capacity": 2688
+            },
+            {
+              "name": "key",
+              "capacity": 384
+            }
           ]
         }
       ],
@@ -105,6 +108,38 @@
     }
   ],
   "checksum": null,
+  "containers": [
+    {
+      "id": "held",
+      "label": {
+        "ru": "Инвентарь",
+        "en": "Inventory"
+      },
+      "path": "inventory.held",
+      "shape": "list",
+      "key": "item",
+      "count": "count",
+      "sequence": "order",
+      "max_count": 999,
+      "capacity": 2688,
+      "catalog": "eldenring"
+    },
+    {
+      "id": "key",
+      "label": {
+        "ru": "Ключевые предметы",
+        "en": "Key items"
+      },
+      "path": "inventory.key",
+      "shape": "list",
+      "key": "item",
+      "count": "count",
+      "sequence": "order",
+      "max_count": 999,
+      "capacity": 384,
+      "catalog": "eldenring"
+    }
+  ],
   "fields": [
     {
       "path": "runes",

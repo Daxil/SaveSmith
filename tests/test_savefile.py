@@ -12,9 +12,12 @@ import pytest
 from savesmith.core.backup import BackupStore
 from savesmith.core.errors import FieldPathError, FieldValueError, SaveSmithError
 from savesmith.core.plugin import Plugin
-from savesmith.core.savefile import SaveFile
+from savesmith.core.savefile import Change, SaveFile
 
-SAVE = {"playerData": {"geo": 42, "maxHealth": 5, "kills": 7, "rank": 3}}
+SAVE: dict[str, Any] = {
+    "playerData": {"geo": 42, "maxHealth": 5, "kills": 7, "rank": 3},
+    "party": {"items": [{"id": "nail", "count": 1, "uuid": "a"}]},
+}
 
 MANIFEST: dict[str, Any] = {
     "id": "test-game",
@@ -46,6 +49,16 @@ MANIFEST: dict[str, Any] = {
             "online_linked": True,
         },
         {"path": "playerData.essence", "label": {"en": "Essence"}, "type": "int"},
+    ],
+    "containers": [
+        {
+            "id": "bag",
+            "label": {"en": "inventory"},
+            "path": "party.items",
+            "shape": "list",
+            "key": "id",
+            "count": "count",
+        }
     ],
 }
 
@@ -216,3 +229,62 @@ class TestWriteRequiresABackupStore:
         backups = signature.parameters["backups"]
         assert backups.default is inspect.Parameter.empty
         assert backups.kind is inspect.Parameter.POSITIONAL_OR_KEYWORD
+
+
+class TestItems:
+    """Containers go through the same file, the same staging, the same backup."""
+
+    def test_what_is_in_the_bag_comes_out(self, save: SaveFile) -> None:
+        assert [(stack.item, stack.count) for stack in save.stacks("bag")] == [("nail", 1)]
+
+    def test_giving_something_shows_up_as_a_pending_change(self, save: SaveFile) -> None:
+        save.give_item("bag", "elixir", 3)
+
+        assert save.modified
+        assert Change(address="bag/elixir", before=0, after=3) in save.pending
+
+    def test_a_count_change_reads_as_the_number_a_player_sees(self, save: SaveFile) -> None:
+        save.give_item("bag", "nail", 4)
+
+        assert Change(address="bag/nail", before=1, after=5) in save.pending
+
+    def test_nothing_reaches_the_file_until_it_is_written(
+        self, save: SaveFile, save_path: Path, plugin: Plugin
+    ) -> None:
+        save.give_item("bag", "elixir", 3)
+
+        reopened = SaveFile.open(save_path, plugin)
+
+        assert [stack.item for stack in reopened.stacks("bag")] == ["nail"]
+
+    def test_a_written_save_holds_the_new_item(
+        self, save: SaveFile, save_path: Path, store: BackupStore, plugin: Plugin
+    ) -> None:
+        save.give_item("bag", "elixir", 3)
+        save.write(store)
+
+        reopened = SaveFile.open(save_path, plugin)
+
+        assert [(s.item, s.count) for s in reopened.stacks("bag")] == [("nail", 1), ("elixir", 3)]
+        assert not save.modified
+
+    def test_reverting_a_container_puts_it_back_as_it_was_opened(self, save: SaveFile) -> None:
+        save.give_item("bag", "elixir", 3)
+        save.set_stack_count("bag", 0, 9)
+
+        save.revert("bag")
+
+        assert [(s.item, s.count) for s in save.stacks("bag")] == [("nail", 1)]
+        assert not save.modified
+
+    def test_reverting_one_container_leaves_a_field_change_alone(self, save: SaveFile) -> None:
+        save.set("playerData.geo", 1000)
+        save.give_item("bag", "elixir")
+
+        save.revert("bag")
+
+        assert save.read("playerData.geo") == 1000
+
+    def test_a_container_this_plugin_does_not_have_says_so(self, save: SaveFile) -> None:
+        with pytest.raises(SaveSmithError, match="describes no 'chest'"):
+            save.give_item("chest", "elixir")

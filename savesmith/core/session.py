@@ -24,6 +24,7 @@ from typing import Any
 from savesmith.core.backup import Backup, BackupStore
 from savesmith.core.cloud import CloudStatus, CloudWizard
 from savesmith.core.errors import SaveSmithError
+from savesmith.core.inventory import Stack
 from savesmith.core.plugin import Plugin, RiskTier
 from savesmith.core.risk import Acknowledgement, Assessment, Consent, RiskDatabase, assess
 from savesmith.core.savefile import Change, FieldView, SaveFile
@@ -119,6 +120,26 @@ class EditSession:
 
     def revert(self, address: str) -> None:
         self.save.revert(address)
+
+    # -- containers -------------------------------------------------------
+
+    def stacks(self, container: str) -> list[Stack]:
+        return self.save.stacks(container)
+
+    def set_stack_count(self, container: str, position: str | int, count: int) -> Stack:
+        return self.save.set_stack_count(container, position, count)
+
+    def give_item(self, container: str, item: str, count: int = 1) -> Stack:
+        """Put something into a container. Same rules, same backup, same risk.
+
+        Items go through the session rather than around it precisely because
+        the ban risk and the Steam Cloud dance apply to a granted item exactly
+        as they apply to a changed number.
+        """
+        return self.save.give_item(container, item, count)
+
+    def remove_stack(self, container: str, position: str | int) -> Stack:
+        return self.save.remove_stack(container, position)
 
     @property
     def pending(self) -> tuple[Change, ...]:

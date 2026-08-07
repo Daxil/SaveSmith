@@ -176,6 +176,43 @@ class FieldSpec:
         raise FieldValueError(label, "this field is either on or off.")
 
 
+class ContainerShape(StrEnum):
+    """How a game stores a bag of things. See :mod:`savesmith.core.inventory`."""
+
+    MAP = "map"
+    LIST = "list"
+    SLOTS = "slots"
+
+
+@dataclass(frozen=True)
+class ContainerSpec:
+    """A place in the save where things can be added, not only changed.
+
+    ``catalog`` names where the readable names and pictures come from — the
+    installed game's own data files, a file the plugin author shipped, or
+    nothing at all, in which case items show as their bare id.
+    """
+
+    id: str
+    label: Localized
+    path: tuple[PathStep, ...]
+    shape: ContainerShape
+    key: str = "id"
+    """The field of a record that says which thing it is."""
+    count: str = "count"
+    sequence: str | None = None
+    """A field the game numbers records with; a new record gets the next one."""
+    empty: Any = None
+    """What an unoccupied place looks like in a ``slots`` container."""
+    max_count: int = 99
+    capacity: int | None = None
+    catalog: str | None = None
+
+    @property
+    def address(self) -> str:
+        return self.id
+
+
 @dataclass(frozen=True)
 class DetectSpec:
     paths: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
@@ -213,6 +250,7 @@ class Plugin:
     risk: RiskSpec
     pipeline: Pipeline
     fields: tuple[FieldSpec, ...]
+    containers: tuple[ContainerSpec, ...] = ()
     steam_appid: int | None = None
     source: Path | None = None
 
@@ -222,6 +260,9 @@ class Plugin:
 
     def field(self, address: str) -> FieldSpec | None:
         return next((spec for spec in self.fields if spec.address == address), None)
+
+    def container(self, identifier: str) -> ContainerSpec | None:
+        return next((spec for spec in self.containers if spec.id == identifier), None)
 
     def groups(self, language: str = _FALLBACK_LANGUAGE) -> dict[str, list[FieldSpec]]:
         """Fields in the order the manifest lists them, bucketed by group.
@@ -291,6 +332,18 @@ class Plugin:
                 )
             seen.add(spec.address)
 
+        containers = tuple(
+            _parse_container(entry, name, index)
+            for index, entry in enumerate(_list(data, "containers", name, required=False))
+        )
+        held: set[str] = set()
+        for container in containers:
+            if container.id in held:
+                raise PluginValidationError(
+                    name, f"container '{container.id}'", "is listed more than once."
+                )
+            held.add(container.id)
+
         return cls(
             id=plugin_id,
             version=_positive_int(data, "version", name),
@@ -304,6 +357,7 @@ class Plugin:
                 plugin_id=plugin_id,
             ),
             fields=fields,
+            containers=containers,
             steam_appid=_optional_int(data, "steam_appid", name),
             source=source,
         )
@@ -431,6 +485,53 @@ def _parse_field(entry: Any, plugin: str, index: int) -> FieldSpec:
         advanced=_flag(entry, "advanced", plugin, where),
         online_linked=_flag(entry, "online_linked", plugin, where),
         achievement=_flag(entry, "achievement", plugin, where),
+    )
+
+
+def _parse_container(entry: Any, plugin: str, index: int) -> ContainerSpec:
+    where = f"container {index + 1}"
+    if not isinstance(entry, dict):
+        raise PluginValidationError(plugin, where, "must be an object.")
+
+    identifier = entry.get("id")
+    if not isinstance(identifier, str) or not identifier:
+        raise PluginValidationError(plugin, where, "has no 'id'.")
+    where = f"container '{identifier}'"
+
+    raw_path = entry.get("path")
+    if not isinstance(raw_path, str | list):
+        raise PluginValidationError(plugin, f"{where} 'path'", "is missing.")
+
+    label = _localized(entry.get("label"), plugin, f"{where} 'label'")
+    assert label is not None  # _localized only returns None when not required
+
+    shape = _enum(entry, "shape", ContainerShape, plugin)
+    capacity = entry.get("capacity")
+    if capacity is not None and (isinstance(capacity, bool) or not isinstance(capacity, int)):
+        raise PluginValidationError(plugin, f"{where} 'capacity'", "must be a whole number.")
+    max_count = entry.get("max_count", 99)
+    if isinstance(max_count, bool) or not isinstance(max_count, int) or max_count < 1:
+        raise PluginValidationError(plugin, f"{where} 'max_count'", "must be 1 or more.")
+
+    sequence = entry.get("sequence")
+    if sequence is not None and not isinstance(sequence, str):
+        raise PluginValidationError(plugin, f"{where} 'sequence'", "must be a field name.")
+    catalog = entry.get("catalog")
+    if catalog is not None and not isinstance(catalog, str):
+        raise PluginValidationError(plugin, f"{where} 'catalog'", "must be a catalog name.")
+
+    return ContainerSpec(
+        id=identifier,
+        label=label,
+        path=normalise(raw_path),
+        shape=shape,
+        key=str(entry.get("key", "id")),
+        count=str(entry.get("count", "count")),
+        sequence=sequence,
+        empty=entry.get("empty"),
+        max_count=max_count,
+        capacity=capacity,
+        catalog=catalog,
     )
 
 

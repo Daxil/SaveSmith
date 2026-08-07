@@ -19,6 +19,32 @@
   },
   "pipeline": [{ "op": "lzstring" }, { "op": "json_parse" }],
   "checksum": null,
+  "containers": [
+    {
+      "id": "items",
+      "label": { "en": "Items", "ru": "Предметы" },
+      "path": "party._items",
+      "shape": "map",
+      "max_count": 99,
+      "catalog": "rpgmaker:items"
+    },
+    {
+      "id": "weapons",
+      "label": { "en": "Weapons", "ru": "Оружие" },
+      "path": "party._weapons",
+      "shape": "map",
+      "max_count": 99,
+      "catalog": "rpgmaker:weapons"
+    },
+    {
+      "id": "armors",
+      "label": { "en": "Armour", "ru": "Броня" },
+      "path": "party._armors",
+      "shape": "map",
+      "max_count": 99,
+      "catalog": "rpgmaker:armors"
+    }
+  ],
   "fields": [
     {
       "path": "party._gold",

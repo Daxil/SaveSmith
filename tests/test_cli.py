@@ -33,6 +33,15 @@ MANIFEST: dict[str, Any] = {
         {"path": "gold", "label": {"en": "Gold", "ru": "Золото"}, "type": "int", "min": 0},
         {"path": "kills", "label": {"en": "Kills"}, "type": "int", "achievement": True},
     ],
+    "containers": [
+        {
+            "id": "bag",
+            "label": {"en": "Items", "ru": "Предметы"},
+            "path": "items",
+            "shape": "map",
+            "catalog": "rpgmaker:items",
+        }
+    ],
 }
 
 
@@ -58,7 +67,8 @@ def plugin_installed(home: FakeSystem) -> Path:
 @pytest.fixture
 def save(tmp_path: Path) -> Path:
     path = tmp_path / "save.dat"
-    path.write_bytes(gzip.compress(json.dumps({"gold": 100, "kills": 3}).encode(), mtime=0))
+    contents = {"gold": 100, "kills": 3, "items": {"1": 2}}
+    path.write_bytes(gzip.compress(json.dumps(contents).encode(), mtime=0))
     return path
 
 
@@ -800,3 +810,114 @@ class TestServingTheWindow:
 
         answer = json.loads(capsys.readouterr().out.strip())
         assert str(home.home_dir) in answer["result"]["text"]
+
+
+class TestItems:
+    """Inventories, from the side a person types at."""
+
+    def a_game_with_its_data(self, tmp_path: Path) -> Path:
+        """An RPG Maker install, which is where the names come from."""
+        data = tmp_path / "game" / "www" / "data"
+        data.mkdir(parents=True)
+        (data / "Items.json").write_text(
+            json.dumps([None, {"id": 1, "name": "Potion", "iconIndex": 176}]), encoding="utf-8"
+        )
+        return tmp_path / "game"
+
+    def test_the_inventory_is_listed_by_id_when_nothing_names_it(
+        self,
+        home: FakeSystem,
+        plugin_installed: Path,
+        save: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        assert run("items", str(save)) == 0
+        out = capsys.readouterr().out
+        assert "Items: 1 things" in out
+        assert "the game's own numbers" in out
+
+    def test_the_games_own_files_give_the_names(
+        self,
+        home: FakeSystem,
+        plugin_installed: Path,
+        save: Path,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        game = self.a_game_with_its_data(tmp_path)
+
+        assert run("items", str(save), "--game-folder", str(game)) == 0
+
+        out = capsys.readouterr().out
+        assert "Potion" in out
+        assert "×2" in out
+
+    def test_giving_something_by_name_writes_it(
+        self,
+        home: FakeSystem,
+        plugin_installed: Path,
+        save: Path,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        game = self.a_game_with_its_data(tmp_path)
+
+        assert run("items", str(save), "--game-folder", str(game), "--give", "Potion", "5") == 0
+
+        assert "Written" in capsys.readouterr().out
+        assert json.loads(gzip.decompress(save.read_bytes()))["items"] == {"1": 7}
+
+    def test_a_dry_run_writes_nothing(
+        self,
+        home: FakeSystem,
+        plugin_installed: Path,
+        save: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        before = save.read_bytes()
+
+        assert run("items", str(save), "--set", "1", "9", "--dry-run") == 0
+
+        assert "bag/1: 2 → 9" in capsys.readouterr().out
+        assert save.read_bytes() == before
+
+    def test_a_name_that_could_mean_two_things_changes_nothing(
+        self,
+        home: FakeSystem,
+        plugin_installed: Path,
+        save: Path,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        data = tmp_path / "game" / "www" / "data"
+        data.mkdir(parents=True)
+        (data / "Items.json").write_text(
+            json.dumps(
+                [None, {"id": 1, "name": "Potion of Life"}, {"id": 2, "name": "Potion of Death"}]
+            ),
+            encoding="utf-8",
+        )
+
+        assert run("items", str(save), "--game-folder", str(tmp_path / "game"),
+                   "--give", "Potion") == 1
+
+        assert "could mean any of these" in capsys.readouterr().err
+
+    def test_a_thing_nobody_has_heard_of_is_refused(
+        self,
+        home: FakeSystem,
+        plugin_installed: Path,
+        save: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        assert run("items", str(save), "--give", "Excalibur") == 1
+        assert "Nothing here is called" in capsys.readouterr().err
+
+    def test_removing_takes_it_out(
+        self,
+        home: FakeSystem,
+        plugin_installed: Path,
+        save: Path,
+    ) -> None:
+        assert run("items", str(save), "--remove", "1") == 0
+        assert json.loads(gzip.decompress(save.read_bytes()))["items"] == {}

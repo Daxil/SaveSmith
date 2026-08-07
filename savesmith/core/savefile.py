@@ -17,6 +17,7 @@ left to the caller's discipline:
 
 from __future__ import annotations
 
+import copy
 import os
 import shutil
 import tempfile
@@ -25,6 +26,7 @@ from pathlib import Path
 from typing import Any
 
 from savesmith.core import fields as field_access
+from savesmith.core import inventory
 from savesmith.core.backup import Backup, BackupStore
 from savesmith.core.errors import (
     FieldPathError,
@@ -32,8 +34,9 @@ from savesmith.core.errors import (
     SaveInUseError,
     SaveSmithError,
 )
+from savesmith.core.inventory import ContainerError, Stack
 from savesmith.core.pipeline import Decoded
-from savesmith.core.plugin import FieldSpec, Plugin
+from savesmith.core.plugin import ContainerSpec, FieldSpec, Plugin
 
 
 @dataclass(frozen=True)
@@ -57,6 +60,34 @@ class FieldView:
     value: Any
 
 
+@dataclass(frozen=True)
+class _ItemOp:
+    """One asked-for change to a container, kept so it can be replayed.
+
+    Containers are edited by *doing things to them* — set this count, put that
+    in — and the places those things refer to move as the container changes.
+    Undoing one edit by reversing it in place would leave every position
+    recorded after it pointing somewhere else. So nothing is reversed: the
+    container goes back to how it was opened and the remaining edits are done
+    again, in order, which cannot drift.
+    """
+
+    container: str
+    verb: str
+    item: str = ""
+    position: str | int = 0
+    count: int = 0
+
+    def apply(self, root: Any, spec: ContainerSpec) -> None:
+        match self.verb:
+            case "set":
+                inventory.set_count(root, spec, self.position, self.count)
+            case "give":
+                inventory.give(root, spec, self.item, self.count)
+            case "remove":
+                inventory.remove(root, spec, self.position)
+
+
 class SaveFile:
     def __init__(self, path: Path, plugin: Plugin, decoded: Decoded, raw: bytes) -> None:
         self.path = path
@@ -64,6 +95,8 @@ class SaveFile:
         self._decoded = decoded
         self._original_bytes = raw
         self._changes: dict[str, Change] = {}
+        self._item_ops: list[_ItemOp] = []
+        self._containers_as_opened: dict[str, Any] = {}
 
     @classmethod
     def open(cls, path: Path, plugin: Plugin) -> SaveFile:
@@ -85,11 +118,17 @@ class SaveFile:
 
     @property
     def pending(self) -> tuple[Change, ...]:
-        return tuple(self._changes.values())
+        """Fields first, then what each container gained and lost."""
+        items = [
+            change
+            for container in self._containers_as_opened
+            for change in self.container_changes(container)
+        ]
+        return (*self._changes.values(), *items)
 
     @property
     def modified(self) -> bool:
-        return bool(self._changes)
+        return bool(self._changes) or bool(self._item_ops)
 
     # -- reading ---------------------------------------------------------
 
@@ -136,6 +175,9 @@ class SaveFile:
         return change
 
     def revert(self, address: str) -> None:
+        if self.plugin.container(address) is not None:
+            self._revert_container(address)
+            return
         change = self._changes.pop(address, None)
         if change is None:
             return
@@ -150,6 +192,89 @@ class SaveFile:
         if spec is None:
             raise FieldPathError(address, "this plugin does not describe such a field.")
         return spec
+
+    # -- containers -------------------------------------------------------
+
+    def stacks(self, container: str) -> list[Stack]:
+        """Everything in one container, as it stands with changes staged."""
+        return inventory.stacks(self._decoded.value, self._container(container))
+
+    def set_stack_count(self, container: str, position: str | int, count: int) -> Stack:
+        return self._do(_ItemOp(container=container, verb="set", position=position, count=count))
+
+    def give_item(self, container: str, item: str, count: int = 1) -> Stack:
+        return self._do(_ItemOp(container=container, verb="give", item=item, count=count))
+
+    def remove_stack(self, container: str, position: str | int) -> Stack:
+        return self._do(_ItemOp(container=container, verb="remove", position=position))
+
+    def container_changes(self, container: str) -> list[Change]:
+        """What this container gained and lost, per thing, in plain numbers."""
+        spec = self._container(container)
+        opened = self._containers_as_opened.get(container)
+        if opened is None:
+            return []
+        now = inventory.container(self._decoded.value, spec)
+        return [
+            Change(address=f"{container}/{item}", before=was, after=became)
+            for item, was, became in inventory.differences(opened, now, spec)
+        ]
+
+    def _container(self, container: str) -> ContainerSpec:
+        spec = self.plugin.container(container)
+        if spec is None:
+            known = ", ".join(other.id for other in self.plugin.containers)
+            raise ContainerError(
+                f"This plugin describes no '{container}' to put things in.",
+                detail=f"containers: {known or '—'}",
+            )
+        return spec
+
+    def _do(self, operation: _ItemOp) -> Stack:
+        spec = self._container(operation.container)
+        self._remember(operation.container, spec)
+        result = self._perform(operation, spec)
+        self._item_ops.append(operation)
+        return result
+
+    def _perform(self, operation: _ItemOp, spec: ContainerSpec) -> Stack:
+        match operation.verb:
+            case "set":
+                return inventory.set_count(
+                    self._decoded.value, spec, operation.position, operation.count
+                )
+            case "give":
+                return inventory.give(
+                    self._decoded.value, spec, operation.item, operation.count
+                )
+            case _:
+                return inventory.remove(self._decoded.value, spec, operation.position)
+
+    def _remember(self, container: str, spec: ContainerSpec) -> None:
+        if container not in self._containers_as_opened:
+            self._containers_as_opened[container] = copy.deepcopy(
+                inventory.container(self._decoded.value, spec)
+            )
+
+    def _revert_container(self, container: str) -> None:
+        """Put a container back to how the file had it, and replay the rest.
+
+        Everything staged for *this* container goes; edits to others are done
+        again from their own starting point, so one container's undo cannot
+        disturb another's.
+        """
+        if container not in self._containers_as_opened:
+            return
+        kept = [op for op in self._item_ops if op.container != container]
+        for name, opened in self._containers_as_opened.items():
+            field_access.write(
+                self._decoded.value, self._container(name).path, copy.deepcopy(opened)
+            )
+        self._item_ops = []
+        self._containers_as_opened.pop(container)
+        for operation in kept:
+            self._perform(operation, self._container(operation.container))
+            self._item_ops.append(operation)
 
     # -- writing ---------------------------------------------------------
 
@@ -169,6 +294,8 @@ class SaveFile:
         self._replace_contents(payload)
         self._original_bytes = payload
         self._changes.clear()
+        self._item_ops.clear()
+        self._containers_as_opened.clear()
         return backup
 
     def _assert_unchanged_on_disk(self) -> None:

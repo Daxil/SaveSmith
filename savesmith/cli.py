@@ -14,20 +14,20 @@ from __future__ import annotations
 
 import argparse
 import sys
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
 from savesmith.agent.discovery import discover as run_discovery
 from savesmith.agent.writer import DEFAULT_MODEL
+from savesmith.core import catalog, compare, detect, diagnostics, direct, library, playerprefs
 from savesmith.core import checksum as checksum_module
-from savesmith.core import compare, detect, diagnostics, direct, library, playerprefs
 from savesmith.core.backup import BackupStore
 from savesmith.core.console import use_utf8
 from savesmith.core.discover import Discovery, GameFolder, Look, examine, look_at
 from savesmith.core.errors import SaveSmithError
 from savesmith.core.paths import RealSystem, SystemFacade
-from savesmith.core.plugin import Plugin
+from savesmith.core.plugin import ContainerSpec, Plugin
 from savesmith.core.repository import verify
 from savesmith.core.risk import Acknowledgement, Assessment, RiskDatabase, assess
 from savesmith.core.session import EditSession
@@ -464,6 +464,185 @@ def _cmd_set(arguments: argparse.Namespace, system: SystemFacade) -> int:
     return 0
 
 
+def _cmd_items(arguments: argparse.Namespace, system: SystemFacade) -> int:
+    """What the character is carrying, and changes to it.
+
+    Without --give, --set or --remove this only reads, which is the common
+    case: people open an inventory to find out what is in it and what the
+    thing they want is called.
+    """
+    session, game = _session_and_game(arguments, system)
+    plugin = session.plugin
+    if not plugin.containers:
+        raise SaveSmithError(
+            f"The plugin for {plugin.game} does not describe an inventory, so there "
+            f"is nothing here to list. Its numbered fields are in 'savesmith show'."
+        )
+
+    wanted = arguments.container
+    containers = [spec for spec in plugin.containers if wanted in (None, spec.id)]
+    if not containers:
+        known = ", ".join(spec.id for spec in plugin.containers)
+        raise SaveSmithError(f"There is no '{wanted}' in this save. There is: {known}.")
+
+    folder = Path(arguments.game_folder).expanduser() if arguments.game_folder else None
+    if folder is None and game is not None:
+        folder = game.path
+    catalogs = {
+        spec.id: catalog.load(
+            spec.catalog,
+            plugin_folder=plugin.source.parent if plugin.source else None,
+            game_folder=folder,
+        )
+        for spec in containers
+    }
+
+    changed = False
+    for action, argument in (
+        ("give", arguments.give),
+        ("set", arguments.set),
+        ("remove", arguments.remove),
+    ):
+        if argument:
+            _change_items(session, containers, catalogs, action, argument)
+            changed = True
+
+    if not changed:
+        for spec in containers:
+            _print_container(session, spec, catalogs[spec.id], arguments)
+        return 0
+
+    for change in session.pending:
+        print(f"{change.address}: {change.before} → {change.after}")
+
+    if arguments.dry_run:
+        print("\nDry run: nothing was written.")
+        return 0
+
+    session.acknowledge(*_acknowledgements(arguments.yes))
+    if arguments.cloud_done:
+        session.confirm_cloud_steps(1, 2, 3)
+    if not session.may_write:
+        print("\nNot written. Still needed:")
+        for blocker in session.blockers:
+            print(f"  {blocker}")
+        print("\nPass --yes with the items above once you have read what they mean.")
+        return 1
+
+    backup = session.write(BackupStore.for_system(system))
+    print(f"\nWritten. Backup: {backup.folder}")
+    return 0
+
+
+def _print_container(
+    session: EditSession,
+    spec: ContainerSpec,
+    known: catalog.Catalog,
+    arguments: argparse.Namespace,
+) -> None:
+    stacks = session.stacks(spec.id)
+    title = spec.label.get(arguments.language)
+    print(f"{title}: {len(stacks)} things" + (f", named from {known.source}" if known else ""))
+    if not known:
+        print("  (no list of names for this game, so these are the game's own numbers)")
+
+    shown = [
+        stack
+        for stack in stacks
+        if not arguments.find or arguments.find.casefold() in known.name_of(stack.item).casefold()
+    ]
+    for stack in shown[: arguments.limit]:
+        count = f"×{stack.count}" if stack.count != 1 else "  "
+        name = known.name_of(stack.item)
+        # The id is worth printing beside a name, and not worth printing twice
+        # when it *is* the name.
+        suffix = f"   ({stack.item})" if name != stack.item else ""
+        print(f"  {name:40} {count:>6}{suffix}")
+    if len(shown) > arguments.limit:
+        print(f"  … and {len(shown) - arguments.limit} more; --limit shows more, --find narrows")
+    print()
+
+
+def _change_items(
+    session: EditSession,
+    containers: Sequence[ContainerSpec],
+    catalogs: Mapping[str, catalog.Catalog],
+    action: str,
+    argument: Sequence[str],
+) -> None:
+    name = argument[0]
+    count = _count_argument(argument, action)
+    spec, item = _which_item(session, containers, catalogs, name)
+
+    match action:
+        case "give":
+            session.give_item(spec.id, item, count)
+        case "set":
+            for stack in session.stacks(spec.id):
+                if stack.item == item:
+                    session.set_stack_count(spec.id, stack.position, count)
+                    break
+        case _:
+            for stack in reversed(session.stacks(spec.id)):
+                if stack.item == item:
+                    session.remove_stack(spec.id, stack.position)
+
+
+def _count_argument(argument: Sequence[str], action: str) -> int:
+    if action == "remove":
+        return 0
+    if len(argument) < 2:
+        return 1
+    try:
+        return int(argument[1])
+    except ValueError:
+        raise SaveSmithError(f"'{argument[1]}' is not a number of items.") from None
+
+
+def _which_item(
+    session: EditSession,
+    containers: Sequence[ContainerSpec],
+    catalogs: Mapping[str, catalog.Catalog],
+    name: str,
+) -> tuple[ContainerSpec, str]:
+    """Which container, and which thing in it. Refuses to guess between two.
+
+    An id is taken as an id; anything else is looked up by name in every
+    container's catalog. Two things sharing a name is the user's cue to type
+    the id, not SaveSmith's cue to pick one.
+    """
+    found: list[tuple[ContainerSpec, catalog.Entry]] = []
+    for spec in containers:
+        known = catalogs[spec.id]
+        if name in known.entries or (not known and _looks_like_an_id(name)):
+            entry = known.get(name) or catalog.Entry(id=name, name=name)
+            found.append((spec, entry))
+            continue
+        found.extend((spec, entry) for entry in known.search(name))
+
+    if not found:
+        raise SaveSmithError(
+            f"Nothing here is called '{name}'. Run 'savesmith items' without arguments "
+            f"to see what there is, or give the game's own number for it."
+        )
+    if len(found) > 1:
+        listing = "\n".join(
+            f"  {entry.name}  ({entry.id}, in {spec.label.get()})" for spec, entry in found[:20]
+        )
+        raise SaveSmithError(
+            f"'{name}' could mean any of these, so nothing was changed:\n{listing}\n\n"
+            f"Say which by giving the number in brackets."
+        )
+    spec, entry = found[0]
+    return spec, entry.id
+
+
+def _looks_like_an_id(name: str) -> bool:
+    """Ids are numbers, or a kind and a number: 42, goods:1007."""
+    kind, _, number = name.rpartition(":")
+    return number.isdigit() and (not kind or kind.isalpha())
+
+
 def _cmd_prefs(arguments: argparse.Namespace, system: SystemFacade) -> int:
     """Unity settings, which are not in the save file at all.
 
@@ -602,6 +781,17 @@ _MAX_CANDIDATES = 12
 
 
 def _session(arguments: argparse.Namespace, system: SystemFacade) -> EditSession:
+    return _session_and_game(arguments, system)[0]
+
+
+def _session_and_game(
+    arguments: argparse.Namespace, system: SystemFacade
+) -> tuple[EditSession, GameFolder | None]:
+    """A session, and the game it belongs to when that is known.
+
+    The game matters beyond anti-cheat: an installed game is where the names
+    and pictures of its items come from.
+    """
     store = PluginStore.for_system(system)
     look = look_at(Path(arguments.file).expanduser(), system)
 
@@ -633,12 +823,15 @@ def _session(arguments: argparse.Namespace, system: SystemFacade) -> EditSession
             )
         plugin = matches[0]
 
-    return EditSession.open(
-        target,
-        plugin,
-        database=RiskDatabase.bundled(),
-        anticheat=game.anticheat if game else (),
-        anticheat_scanned=game is not None,
+    return (
+        EditSession.open(
+            target,
+            plugin,
+            database=RiskDatabase.bundled(),
+            anticheat=game.anticheat if game else (),
+            anticheat_scanned=game is not None,
+        ),
+        game,
     )
 
 
@@ -868,6 +1061,32 @@ def _parser() -> argparse.ArgumentParser:
     )
     setter.add_argument("--dry-run", action="store_true", help="show the change, write nothing")
     setter.set_defaults(handler=_cmd_set)
+
+    items = subparsers.add_parser("items", help="what is in the inventory, and changes to it")
+    _add_save_arguments(items)
+    items.add_argument("--container", help="only this one, when the game has several")
+    items.add_argument("--find", help="only things whose name contains this")
+    items.add_argument(
+        "--limit", type=int, default=40, metavar="N", help="how many to print (default 40)"
+    )
+    items.add_argument(
+        "--give", nargs="+", metavar=("ITEM", "COUNT"), help="put something in, by name or id"
+    )
+    items.add_argument(
+        "--set", nargs=2, metavar=("ITEM", "COUNT"), help="how many of something there should be"
+    )
+    items.add_argument("--remove", nargs=1, metavar="ITEM", help="take something out")
+    items.add_argument(
+        "--yes",
+        nargs="*",
+        metavar="ITEM",
+        help="confirm a risk you have read: " + ", ".join(item.value for item in Acknowledgement),
+    )
+    items.add_argument(
+        "--cloud-done", action="store_true", help="the Steam Cloud steps have been carried out"
+    )
+    items.add_argument("--dry-run", action="store_true", help="show the changes, write nothing")
+    items.set_defaults(handler=_cmd_items)
 
     prefs = subparsers.add_parser(
         "prefs", help="Unity settings, which are not kept in the save file"

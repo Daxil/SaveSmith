@@ -42,6 +42,7 @@ from __future__ import annotations
 
 import struct
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from typing import Any
 
 from savesmith.core.ops._registry import Hints, Operation, Params, register
@@ -56,6 +57,45 @@ _SCALARS: dict[str, str] = {
     "runes_memory": _U32,
 }
 
+# An inventory row: the handle of the thing, how many of it, and where the game
+# shows it in the list.
+_ROW = 12
+
+# The top nibble says what kind of thing something is — and the handles and the
+# ids do not use the same numbering, so both tables are needed. This is the
+# family's convention rather than one game's numbers, which is why it lives
+# here and not in a manifest.
+_BY_HANDLE: dict[int, str] = {
+    0x8: "weapon",
+    0x9: "protector",
+    0xA: "accessory",
+    0xB: "goods",
+    0xC: "gem",
+}
+_BY_ITEM_ID: dict[int, str] = {
+    0x0: "weapon",
+    0x1: "protector",
+    0x2: "accessory",
+    0x4: "goods",
+    0x8: "gem",
+}
+# Weapons, armour and ashes of war carry per-copy state — reinforcement, the
+# ash fitted to a weapon — which lives in the item table, so their handle is a
+# reference into it. Talismans and consumables have no such state and carry
+# their own id in the low bits of the handle instead.
+_NEEDS_ITEM_TABLE = frozenset({"weapon", "protector", "gem"})
+_NIBBLES = {name: nibble for nibble, name in _BY_HANDLE.items()}
+
+
+@dataclass(frozen=True)
+class _Table:
+    """Where one inventory table sits inside the slot."""
+
+    name: str
+    count_at: int
+    rows_at: int
+    capacity: int
+
 
 class _Walk:
     """Follows a slot's own structure, marking the blocks worth naming."""
@@ -64,6 +104,8 @@ class _Walk:
         self.buf = payload
         self.at = 0
         self.marks: dict[str, int] = {}
+        self.item_table: dict[int, int] = {}
+        self.tables: list[_Table] = []
         for index, step in enumerate(steps):
             self._one(step, index)
 
@@ -112,17 +154,162 @@ class _Walk:
             self.at += 8
             if item_id in (0, 0xFFFFFFFF):
                 continue
+            # Kept, because the inventory names weapons, armour and ashes of
+            # war by handle and only this table says which thing a handle is.
+            self.item_table[handle] = item_id
             category = item_id & 0xF0000000
             if category == 0:
                 self.at += weapon_extra
             elif category == 0x10000000:
                 self.at += armour_extra
-            _ = handle  # read for the bounds check; nothing here needs its value
 
-    def _inventory(self, caps: Sequence[int]) -> None:
-        """Two capped tables of twelve-byte rows, then two counters."""
-        common, key = int(caps[0]), int(caps[1])
-        self.at += 4 + common * 12 + 4 + key * 12 + 8
+    def _inventory(self, tables: Sequence[Mapping[str, Any]]) -> None:
+        """Capped tables of twelve-byte rows, one after another, then counters.
+
+        Each table is a u32 count followed by ``capacity`` rows, of which only
+        the first ``count`` are in use — and "in use" includes gaps, rows the
+        game zeroed when something was dropped. The count spans them, so they
+        are part of the table's shape rather than something to tidy away.
+        """
+        for entry in tables:
+            name = str(entry["name"])
+            capacity = int(entry["capacity"])
+            count = self._u32(self.at, f"the {name} inventory")
+            if count > capacity:
+                raise ValueError(
+                    f"the {name} inventory claims {count} items but holds at most "
+                    f"{capacity}; the layout is reading the wrong part of the slot"
+                )
+            self.tables.append(
+                _Table(name=name, count_at=self.at, rows_at=self.at + 4, capacity=capacity)
+            )
+            self.at += 4 + capacity * _ROW
+        # Two counters the game keeps after the tables. Nothing here reads them.
+        self.at += 8
+
+
+def _item_of(handle: int, item_table: Mapping[int, int]) -> str | None:
+    """What thing this handle refers to, as ``kind:number``.
+
+    ``None`` for a gap, and for a handle whose item table entry is missing —
+    an identity nobody can name is not one to invent. The row keeps its handle
+    either way, so a file with such a row still rebuilds exactly.
+    """
+    kind = _BY_HANDLE.get(handle >> 28)
+    if kind is None:
+        return None
+    if kind not in _NEEDS_ITEM_TABLE:
+        return f"{kind}:{handle & 0x0FFFFFFF}"
+    item_id = item_table.get(handle)
+    if item_id is None:
+        return None
+    # The table is the authority on what the thing is: a handle only says where
+    # to look, and the two numberings do not agree.
+    named = _BY_ITEM_ID.get(item_id >> 28)
+    return None if named is None else f"{named}:{item_id & 0x0FFFFFFF}"
+
+
+def _read_inventory(buf: bytes, walk: _Walk) -> dict[str, list[dict[str, Any]]]:
+    inventory: dict[str, list[dict[str, Any]]] = {}
+    for table in walk.tables:
+        count: int = struct.unpack_from(_U32, buf, table.count_at)[0]
+        rows = []
+        for index in range(count):
+            handle, quantity, order = struct.unpack_from(
+                "<3I", buf, table.rows_at + index * _ROW
+            )
+            rows.append(
+                {
+                    "item": _item_of(handle, walk.item_table),
+                    "count": quantity,
+                    "order": order,
+                    "handle": handle,
+                }
+            )
+        inventory[table.name] = rows
+    return inventory
+
+
+def _handle_for(row: Any, where: str, item_table: Mapping[int, int]) -> int:
+    """The handle to write for a row, given what the row now says it is.
+
+    ``item`` is what an editor changes; the handle is how the save records it.
+    For talismans and consumables the handle *is* the id, so a row can be
+    pointed at a different thing simply by naming it. For weapons, armour and
+    ashes of war it is a reference into the item table, where the reinforcement
+    and the fitted ash live — those cannot be conjured, so naming one that is
+    not already in the table is refused instead of writing a handle that points
+    at nothing.
+    """
+    item = _record(row, where).get("item")
+    if item is None:
+        return _u32_of(row, "handle", where)
+    kind, _, number = str(item).partition(":")
+    nibble = _NIBBLES.get(kind)
+    if nibble is None or not number.isdigit():
+        raise ValueError(f"'{item}' is not an item this save can hold; expected kind:number")
+    identifier = int(number)
+    if kind not in _NEEDS_ITEM_TABLE:
+        return nibble << 28 | identifier
+    handle = _u32_of(row, "handle", where)
+    if item_table.get(handle, -1) & 0x0FFFFFFF != identifier:
+        raise ValueError(
+            f"'{item}' cannot be put into the {where} inventory this way: weapons, "
+            f"armour and ashes of war carry their own reinforcement in a separate "
+            f"table, and SaveSmith does not create entries there yet. Their count "
+            f"can still be changed."
+        )
+    return handle
+
+
+def _write_inventory(
+    buf: bytearray,
+    tables: Sequence[_Table],
+    inventory: Mapping[str, Any],
+    item_table: Mapping[int, int],
+) -> None:
+    for table in tables:
+        rows = inventory.get(table.name)
+        if rows is None:
+            continue
+        if not isinstance(rows, list):
+            raise ValueError(f"the {table.name} inventory is a list of items")
+        if len(rows) > table.capacity:
+            raise ValueError(
+                f"the {table.name} inventory holds {table.capacity} items and "
+                f"{len(rows)} were given"
+            )
+        was: int = struct.unpack_from(_U32, buf, table.count_at)[0]
+        for index, row in enumerate(rows):
+            struct.pack_into(
+                "<3I",
+                buf,
+                table.rows_at + index * _ROW,
+                _handle_for(row, table.name, item_table),
+                _u32_of(row, "count", table.name),
+                _u32_of(row, "order", table.name),
+            )
+        # Rows the list no longer has are cleared rather than left behind: the
+        # count is what the game reads, but a stale row inside the capacity is
+        # the kind of leftover that turns up later as a ghost item.
+        for index in range(len(rows), was):
+            struct.pack_into("<3I", buf, table.rows_at + index * _ROW, 0, 0, 0)
+        struct.pack_into(_U32, buf, table.count_at, len(rows))
+
+
+def _record(row: Any, where: str) -> Mapping[str, Any]:
+    if not isinstance(row, Mapping):
+        raise ValueError(f"an item in the {where} inventory is not a record: {row!r}")
+    return row
+
+
+def _u32_of(row: Any, key: str, where: str) -> int:
+    value = _record(row, where).get(key, 0)
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"'{key}' of an item in the {where} inventory is a whole number")
+    if not 0 <= value <= 0xFFFFFFFF:
+        raise ValueError(f"'{key}' of an item in the {where} inventory is out of range: {value}")
+    return value
 
 
 def _layout(params: Params) -> tuple[Sequence[Mapping[str, Any]], Mapping[str, Any]]:
@@ -210,12 +397,17 @@ def _decode(payload: Any, params: Params, hints: Hints) -> dict[str, Any]:
         names = list(attributes.get("names", ()))
         values["attributes"] = dict(zip(names, _attributes(buf, base, attributes), strict=True))
 
+    if marks.tables:
+        values["inventory"] = _read_inventory(buf, marks)
+
     _check(values, fields, marks.at, len(buf))
 
     # Everything not named here comes back untouched, so a slot the size of a
     # small film rebuilds exactly.
     hints["slot_bytes"] = buf
     hints["slot_base"] = base
+    hints["slot_tables"] = tuple(marks.tables)
+    hints["slot_item_table"] = marks.item_table
     return values
 
 
@@ -249,6 +441,11 @@ def _encode(payload: Any, params: Params, hints: Mapping[str, Any]) -> bytes:
             value = payload["attributes"].get(key)
             if isinstance(value, int) and not isinstance(value, bool):
                 struct.pack_into(_U32, buf, at + index * 4, value)
+
+    inventory = payload.get("inventory")
+    tables = hints.get("slot_tables") or ()
+    if isinstance(inventory, dict) and tables:
+        _write_inventory(buf, tables, inventory, hints.get("slot_item_table") or {})
 
     # The name is left alone on purpose: it is variable-width UTF-16 in a fixed
     # buffer the game also uses for the save's menu entry, and renaming a

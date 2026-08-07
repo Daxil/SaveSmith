@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 from savesmith.agent.sandbox import SandboxError
+from savesmith.core.catalog import CatalogError
 from savesmith.core.direct import AddressError, NoFormatError
 from savesmith.core.errors import (
     AmbiguousWineUserError,
@@ -31,6 +32,7 @@ from savesmith.core.errors import (
     VdfParseError,
     WinePrefixError,
 )
+from savesmith.core.inventory import ContainerError
 from savesmith.core.playerprefs import PlayerPrefsError
 from savesmith.core.risk import Acknowledgement
 from savesmith.core.session import ConsentRequiredError
@@ -61,6 +63,16 @@ SAMPLES: list[SaveSmithError] = [
     AddressError("The address '0x40' does not say how the number is stored."),
     WinePrefixError("/bottles/hk", "it has no drive_c folder"),
     AmbiguousWineUserError("/bottles/hk", ("danil", "crossover")),
+    ContainerError(
+        "The inventory is empty, and SaveSmith adds things by copying something "
+        "already in there. Pick up any one item in the game, save, and open this again.",
+        detail="party.items is empty",
+    ),
+    CatalogError(
+        "The item list beside this plugin could not be read, so items will show "
+        "as bare numbers.",
+        detail="items.json: line 1",
+    ),
 ]
 
 
