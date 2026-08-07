@@ -51,7 +51,9 @@ class TestFromTheGamesOwnFiles:
         found = catalog.load("rpgmaker:items", game_folder=game)
 
         assert found.name_of("1") == "Potion"
-        assert found.get("1").icon == catalog.Icon(sheet="rpgmaker-iconset", index=176)
+        potion = found.get("1")
+        assert potion is not None
+        assert potion.icon == catalog.Icon(sheet="rpgmaker-iconset", index=176)
         assert found.sheets["rpgmaker-iconset"].png == PNG
         assert "game's own data files" in found.source
 
@@ -71,9 +73,10 @@ class TestFromTheGamesOwnFiles:
     def test_the_engines_line_breaks_do_not_reach_the_screen(self, tmp_path: Path) -> None:
         game = an_rpgmaker_game(tmp_path / "game")
 
-        assert catalog.load("rpgmaker:items", game_folder=game).get("1").description == (
-            "Heals a bit."
-        )
+        potion = catalog.load("rpgmaker:items", game_folder=game).get("1")
+
+        assert potion is not None
+        assert potion.description == "Heals a bit."
 
     def test_nameless_holes_are_left_out(self, tmp_path: Path) -> None:
         game = an_rpgmaker_game(tmp_path / "game")
@@ -118,7 +121,9 @@ class TestFromAPackBesideThePlugin:
         found = catalog.load("eldenring", plugin_folder=plugin)
 
         assert found.name_of("goods:1007") == "Rune Arc"
-        assert found.get("goods:1007").icon == catalog.Icon(sheet="menu", index=12)
+        arc = found.get("goods:1007")
+        assert arc is not None
+        assert arc.icon == catalog.Icon(sheet="menu", index=12)
         assert found.sheets["menu"].tile == 40
 
     def test_the_game_wins_when_it_has_the_answer_too(self, tmp_path: Path) -> None:
