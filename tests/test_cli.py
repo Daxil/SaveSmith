@@ -425,3 +425,71 @@ class TestShippedResources:
             operation.decode.__module__.rsplit(".", 1)[-1] for operation in ops.all_operations()
         }
         assert modules <= listed, f"add to savesmith.spec: {sorted(modules - listed)}"
+
+
+class TestPlayerPrefs:
+    def test_reading_settings_that_are_not_in_a_file(
+        self, home: FakeSystem, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Plenty of Unity games keep real progress here rather than in a save."""
+        import plistlib
+
+        from savesmith.core.paths import PathResolver
+
+        prefs_dir = PathResolver(home).token("PREFS")
+        assert prefs_dir is not None
+        prefs_dir.mkdir(parents=True, exist_ok=True)
+        with (prefs_dir / "unity.Studio.Game.plist").open("wb") as handle:
+            plistlib.dump({"coins": 250}, handle, fmt=plistlib.FMT_BINARY)
+
+        assert run("prefs", "--company", "Studio", "--product", "Game") == 0
+        assert "coins" in capsys.readouterr().out
+
+    def test_changing_one_backs_it_up_first(
+        self, home: FakeSystem, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        import plistlib
+
+        from savesmith.core.paths import PathResolver
+
+        prefs_dir = PathResolver(home).token("PREFS")
+        assert prefs_dir is not None
+        prefs_dir.mkdir(parents=True, exist_ok=True)
+        path = prefs_dir / "unity.Studio.Game.plist"
+        with path.open("wb") as handle:
+            plistlib.dump({"coins": 250}, handle, fmt=plistlib.FMT_BINARY)
+
+        code = run("prefs", "--company", "Studio", "--product", "Game", "--set", "coins", "9999")
+        assert code == 0
+        assert "Backup:" in capsys.readouterr().out
+        with path.open("rb") as handle:
+            assert plistlib.load(handle)["coins"] == 9999
+
+    def test_the_stored_type_is_kept(self, home: FakeSystem) -> None:
+        """Turning a number into text would give the game something it cannot read."""
+        import plistlib
+
+        from savesmith.core.paths import PathResolver
+
+        prefs_dir = PathResolver(home).token("PREFS")
+        assert prefs_dir is not None
+        prefs_dir.mkdir(parents=True, exist_ok=True)
+        path = prefs_dir / "unity.Studio.Game.plist"
+        with path.open("wb") as handle:
+            plistlib.dump({"coins": 250}, handle, fmt=plistlib.FMT_BINARY)
+
+        run("prefs", "--company", "Studio", "--product", "Game", "--set", "coins", "7")
+        with path.open("rb") as handle:
+            assert isinstance(plistlib.load(handle)["coins"], int)
+
+    def test_it_asks_for_the_names_it_needs(
+        self, home: FakeSystem, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        assert run("prefs") == 1
+        assert "publisher and a product" in capsys.readouterr().err
+
+    def test_a_game_with_nothing_stored(
+        self, home: FakeSystem, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        assert run("prefs", "--company", "Nobody", "--product", "Nothing") == 1
+        assert "Nothing stored here" in capsys.readouterr().out

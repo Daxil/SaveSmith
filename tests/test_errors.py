@@ -28,6 +28,7 @@ from savesmith.core.errors import (
     VdfParseError,
     WinePrefixError,
 )
+from savesmith.core.playerprefs import PlayerPrefsError
 from savesmith.core.risk import Acknowledgement
 from savesmith.core.session import ConsentRequiredError
 from savesmith.core.store import PluginInstallError
@@ -52,6 +53,7 @@ SAMPLES: list[SaveSmithError] = [
     ConsentRequiredError(frozenset({Acknowledgement.BAN_RISK}), steps=(1, 2)),
     SandboxError("it did not finish within 10 seconds", detail="timeout"),
     PluginInstallError("shared-game", "it is not a readable archive."),
+    PlayerPrefsError("the settings file is damaged or unreadable", detail="x.plist"),
     WinePrefixError("/bottles/hk", "it has no drive_c folder"),
     AmbiguousWineUserError("/bottles/hk", ("danil", "crossover")),
 ]

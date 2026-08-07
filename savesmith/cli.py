@@ -16,10 +16,11 @@ import argparse
 import sys
 from collections.abc import Sequence
 from pathlib import Path
+from typing import Any
 
 from savesmith.agent.discovery import discover as run_discovery
 from savesmith.core import checksum as checksum_module
-from savesmith.core import compare, detect, diagnostics
+from savesmith.core import compare, detect, diagnostics, playerprefs
 from savesmith.core.backup import BackupStore
 from savesmith.core.discover import examine, find_saves
 from savesmith.core.errors import SaveSmithError
@@ -244,6 +245,57 @@ def _cmd_set(arguments: argparse.Namespace, system: SystemFacade) -> int:
     return 0
 
 
+def _cmd_prefs(arguments: argparse.Namespace, system: SystemFacade) -> int:
+    """Unity settings, which are not in the save file at all.
+
+    Plenty of Unity games keep real progress here: unlocked levels, currency,
+    whether the tutorial was finished. A tool that only reads save files tells
+    those players their game is not supported.
+    """
+    company, product = arguments.company, arguments.product
+    if arguments.game_folder:
+        game = examine(Path(arguments.game_folder).expanduser())
+        company = company or game.company
+        product = product or game.project
+    if not company or not product:
+        raise SaveSmithError(
+            "Unity settings are stored under a publisher and a product name. "
+            "Give both, or point at the game's folder with --game-folder."
+        )
+
+    store = playerprefs.open_prefs(system, company, product)
+    entries = store.read()
+    print(f"{store.location}\n")
+    if not entries:
+        print("Nothing stored here.")
+        return 1
+
+    for name, entry in sorted(entries.items()):
+        print(f"  {name:32} {entry.value!r}   ({entry.kind})")
+
+    if not arguments.set:
+        return 0
+
+    name, raw_value = arguments.set
+    backup = BackupStore.for_system(system).create_from_bytes(
+        f"{company}.{product}.playerprefs", store.export(), plugin_id="playerprefs"
+    )
+    store.write(name, _typed(raw_value, entries[name].kind if name in entries else "string"))
+    print(f"\n{name} → {raw_value}\nBackup: {backup.folder}")
+    return 0
+
+
+def _typed(raw: str, kind: str) -> Any:
+    """Keep the type the game stored, rather than turning a number into text."""
+    if kind == "int":
+        return int(raw)
+    if kind == "float":
+        return float(raw)
+    if kind == "bool":
+        return raw.strip().lower() in ("1", "true", "yes")
+    return raw
+
+
 def _cmd_backups(arguments: argparse.Namespace, system: SystemFacade) -> int:
     store = BackupStore.for_system(system)
     backups = store.list_for(arguments.plugin)
@@ -457,6 +509,17 @@ def _parser() -> argparse.ArgumentParser:
     )
     setter.add_argument("--dry-run", action="store_true", help="show the change, write nothing")
     setter.set_defaults(handler=_cmd_set)
+
+    prefs = subparsers.add_parser(
+        "prefs", help="Unity settings, which are not kept in the save file"
+    )
+    prefs.add_argument("--company", help="the publisher name Unity stores things under")
+    prefs.add_argument("--product", help="the product name")
+    prefs.add_argument("--game-folder", help="read both names from the game's folder instead")
+    prefs.add_argument(
+        "--set", nargs=2, metavar=("NAME", "VALUE"), help="change one setting, after backing up"
+    )
+    prefs.set_defaults(handler=_cmd_prefs)
 
     backups = subparsers.add_parser("backups", help="list or restore backups")
     backups.add_argument("plugin")

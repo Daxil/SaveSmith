@@ -25,6 +25,7 @@ from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
+from typing import Any
 
 from savesmith.core.errors import AmbiguousWineUserError, WinePrefixError
 from savesmith.core.paths import KnownFolder, PathResolver, RegistryHive, SystemFacade, locate
@@ -368,6 +369,27 @@ class BottleSystem:
             return None
         translated = self.translate(raw)
         return str(translated) if translated is not None else raw
+
+    def registry_values(self, hive: RegistryHive, key: str) -> dict[str, tuple[Any, int]]:
+        """Every value under one key of the bottle's registry.
+
+        This is what makes Unity PlayerPrefs work for a Windows game running on
+        a Mac: the game wrote them into the bottle's ``user.reg``, and nothing
+        else on the machine knows they are there.
+        """
+        entry = self._hive_data(hive).get(key.replace("/", "\\").lower(), {})
+        # Type 1 (REG_SZ) throughout: the .reg text format keeps strings, and a
+        # dword was already converted to its decimal form when parsed.
+        return {name: (value, 1) for name, value in entry.items()}
+
+    def registry_write(
+        self, hive: RegistryHive, key: str, value_name: str, data: Any, value_type: int
+    ) -> None:
+        raise WinePrefixError(
+            str(self._prefix.path),
+            "SaveSmith can read settings inside a Windows bottle but not write them yet; "
+            "the bottle's registry files are only safe to change while Wine is not running",
+        )
 
     def _hive_data(self, hive: RegistryHive) -> dict[str, dict[str, str]]:
         if hive not in self._registry:

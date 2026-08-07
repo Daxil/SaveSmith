@@ -24,7 +24,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
-from savesmith.core.errors import UnsupportedPlatformError
+from savesmith.core.errors import SaveSmithError, UnsupportedPlatformError
 
 
 class KnownFolder(StrEnum):
@@ -134,22 +134,65 @@ def known_folder_path(folder: KnownFolder) -> Path | None:
     return Path(value) if value else None
 
 
-def registry_read(hive: RegistryHive, key: str, value_name: str) -> str | None:
-    """Read a single string value. Returns ``None`` if key or value is absent.
+def registry_values(hive: RegistryHive, key: str) -> dict[str, tuple[Any, int]]:
+    """Every value under one key, as ``{name: (data, type)}``.
 
-    Read-only by design: milestone 1 never writes to the registry, and the two
-    hives in :class:`RegistryHive` are the only ones we touch.
+    Needed because Unity does not store a PlayerPrefs key under its own name:
+    it appends ``_h`` and a hash of the name. Reading them back means listing
+    what is there and stripping the suffix, rather than reimplementing a hash
+    function nobody has documented.
     """
+    winreg = _winreg()
+    try:
+        with winreg.OpenKey(getattr(winreg, hive.value), key, 0, winreg.KEY_READ) as handle:
+            count = winreg.QueryInfoKey(handle)[1]
+            found: dict[str, tuple[Any, int]] = {}
+            for index in range(count):
+                name, data, value_type = winreg.EnumValue(handle, index)
+                found[str(name)] = (data, int(value_type))
+            return found
+    except FileNotFoundError:
+        return {}
+    except OSError:
+        return {}
+
+
+def registry_write(
+    hive: RegistryHive, key: str, value_name: str, data: Any, value_type: int
+) -> None:
+    """Write one value, creating the key if it is not there."""
+    winreg = _winreg()
+    try:
+        root = getattr(winreg, hive.value)
+        with winreg.CreateKeyEx(root, key, 0, winreg.KEY_SET_VALUE) as handle:
+            winreg.SetValueEx(handle, value_name, 0, value_type, data)
+    except OSError as exc:
+        raise SaveSmithError(
+            "This setting could not be written to the Windows registry. "
+            "Close the game and try again.",
+            detail=f"{hive.value}\\{key}\\{value_name}: {exc}",
+        ) from exc
+
+
+def _winreg() -> Any:
     # importlib rather than a plain import: winreg does not exist off-Windows,
     # and this keeps the module importable there without conditional imports.
     try:
-        winreg = importlib.import_module("winreg")
+        return importlib.import_module("winreg")
     except ImportError as exc:
         raise UnsupportedPlatformError(
             "this operating system",
             detail=f"winreg unavailable: {exc}",
         ) from exc
 
+
+def registry_read(hive: RegistryHive, key: str, value_name: str) -> str | None:
+    """Read a single string value. Returns ``None`` if key or value is absent.
+
+    Read-only by design: milestone 1 never writes to the registry, and the two
+    hives in :class:`RegistryHive` are the only ones we touch.
+    """
+    winreg = _winreg()
     # RegistryHive values are the winreg constant names, so no mapping table.
     hive_handle = getattr(winreg, hive.value)
     try:

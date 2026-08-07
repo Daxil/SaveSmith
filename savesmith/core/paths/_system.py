@@ -20,7 +20,7 @@ import getpass
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 from savesmith.core.errors import UnsupportedPlatformError
 from savesmith.core.paths import _windows
@@ -70,6 +70,16 @@ class SystemFacade(Protocol):
         """A registry string value, or ``None`` if key or value is absent."""
         ...
 
+    def registry_values(self, hive: RegistryHive, key: str) -> dict[str, tuple[Any, int]]:
+        """Every value under a key, as ``{name: (data, type)}``."""
+        ...
+
+    def registry_write(
+        self, hive: RegistryHive, key: str, value_name: str, data: Any, value_type: int
+    ) -> None:
+        """Write one value. The only method here that changes the machine."""
+        ...
+
 
 def _require_windows(platform: Platform, what: str) -> None:
     if platform is not Platform.WINDOWS:
@@ -114,6 +124,16 @@ class RealSystem:
         _require_windows(self._platform, "registry_read")
         return _windows.registry_read(hive, key, value_name)
 
+    def registry_values(self, hive: RegistryHive, key: str) -> dict[str, tuple[Any, int]]:
+        _require_windows(self._platform, "registry_values")
+        return _windows.registry_values(hive, key)
+
+    def registry_write(
+        self, hive: RegistryHive, key: str, value_name: str, data: Any, value_type: int
+    ) -> None:
+        _require_windows(self._platform, "registry_write")
+        _windows.registry_write(hive, key, value_name, data, value_type)
+
 
 @dataclass
 class FakeSystem:
@@ -127,7 +147,8 @@ class FakeSystem:
     home_dir: Path
     env_vars: dict[str, str] = field(default_factory=dict)
     known_folders: dict[KnownFolder, Path] = field(default_factory=dict)
-    registry: dict[tuple[RegistryHive, str, str], str] = field(default_factory=dict)
+    registry: dict[tuple[RegistryHive, str, str], Any] = field(default_factory=dict)
+    registry_types: dict[tuple[RegistryHive, str, str], int] = field(default_factory=dict)
     user: str = "tester"
 
     def env(self, name: str) -> str | None:
@@ -145,4 +166,20 @@ class FakeSystem:
 
     def registry_read(self, hive: RegistryHive, key: str, value_name: str) -> str | None:
         _require_windows(self.platform, "registry_read")
-        return self.registry.get((hive, key, value_name))
+        found = self.registry.get((hive, key, value_name))
+        return None if found is None else str(found)
+
+    def registry_values(self, hive: RegistryHive, key: str) -> dict[str, tuple[Any, int]]:
+        _require_windows(self.platform, "registry_values")
+        return {
+            name: (data, self.registry_types.get((hive, stored_key, name), 1))
+            for (stored_hive, stored_key, name), data in self.registry.items()
+            if stored_hive is hive and stored_key.lower() == key.lower()
+        }
+
+    def registry_write(
+        self, hive: RegistryHive, key: str, value_name: str, data: Any, value_type: int
+    ) -> None:
+        _require_windows(self.platform, "registry_write")
+        self.registry[(hive, key, value_name)] = data
+        self.registry_types[(hive, key, value_name)] = value_type

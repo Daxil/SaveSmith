@@ -111,6 +111,38 @@ class BackupStore:
         self._write_metadata(backup)
         return backup
 
+    def create_from_bytes(self, name: str, data: bytes, *, plugin_id: str = "unknown") -> Backup:
+        """Back up something that is not a file.
+
+        Unity's PlayerPrefs live in the Windows registry, where there is no
+        file to copy — but the rule that nothing is changed without a copy
+        first does not get an exception just because the storage is unusual.
+        """
+        created_at = datetime.now(UTC)
+        folder = self._unique_folder(plugin_id, created_at)
+        try:
+            folder.mkdir(parents=True)
+            destination = folder / _safe_name(name)
+            destination.write_bytes(data)
+        except OSError as exc:
+            raise BackupError(
+                name,
+                "Check that there is free disk space and that SaveSmith may write "
+                "to its own folder.",
+                detail=f"{folder}: {exc.strerror}",
+            ) from exc
+
+        backup = Backup(
+            folder=folder,
+            file=destination,
+            original=Path(name),
+            created_at=created_at,
+            plugin_id=plugin_id,
+            size=len(data),
+        )
+        self._write_metadata(backup)
+        return backup
+
     def _unique_folder(self, plugin_id: str, moment: datetime) -> Path:
         base = self.root / _safe_name(plugin_id) / moment.strftime(_STAMP_FORMAT)
         if not base.exists():
