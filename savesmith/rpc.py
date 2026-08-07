@@ -37,7 +37,7 @@ from typing import IO, Any
 
 from savesmith.agent.discovery import discover as run_discovery
 from savesmith.core import checksum as checksum_module
-from savesmith.core import detect, diagnostics
+from savesmith.core import detect, diagnostics, direct, playerprefs
 from savesmith.core.backup import BackupStore
 from savesmith.core.discover import examine, find_saves
 from savesmith.core.errors import SaveSmithError
@@ -155,6 +155,10 @@ class Server:
             "identify": self._identify,
             "checksums": self._checksums,
             "discover": self._discover,
+            "search": self._search,
+            "poke": self._poke,
+            "prefs.read": self._prefs_read,
+            "prefs.set": self._prefs_set,
             "open": self._open,
             "set": self._set,
             "acknowledge": self._acknowledge,
@@ -213,6 +217,17 @@ class Server:
                 "anticheat": list(game.anticheat),
             },
             "searched": [str(path) for path in found.searched],
+            "prefs": (
+                {
+                    "location": found.prefs.location,
+                    "entries": [
+                        {"name": entry.name, "value": entry.value, "kind": entry.kind}
+                        for entry in found.prefs.entries
+                    ],
+                }
+                if found.prefs is not None
+                else None
+            ),
             "saves": [
                 {
                     "path": str(save.path),
@@ -223,6 +238,97 @@ class Server:
                 for save in found.saves
             ],
         }
+
+    def _search(self, params: dict[str, Any], _notify: Notify) -> dict[str, Any]:
+        """Where a number lives in a save that has no plugin."""
+        save = direct.DirectSave.open(Path(_require(params, "path")))
+        sites = save.search(_require_number(params, "value"))
+        return {
+            "format": save.description,
+            "structured": save.is_structured,
+            "sites": [
+                {"address": site.address, "value": site.value, "context": site.context}
+                for site in sites
+            ],
+        }
+
+    def _poke(self, params: dict[str, Any], _notify: Notify) -> dict[str, Any]:
+        """Change a number by address, in a game nothing is known about.
+
+        ``confirmed`` is the same wall as the command line's --yes: an
+        interface must have shown the player what it cannot tell them about
+        this game before it gets here.
+        """
+        save = direct.DirectSave.open(Path(_require(params, "path")))
+        address = str(_require(params, "address"))
+        before, after = save.change(address, _require_number(params, "value"))
+
+        if not params.get("confirmed"):
+            raise RpcError(
+                INVALID_PARAMS,
+                "This game has no plugin, so SaveSmith cannot say what this number "
+                "does or whether the game will accept it. Confirm to write it.",
+            )
+        if params.get("dry_run"):
+            save.rebuild()
+            return {"written": False, "address": address, "before": before, "after": after}
+
+        backup = save.write(BackupStore.for_system(self.system))
+        return {
+            "written": True,
+            "address": address,
+            "before": before,
+            "after": after,
+            "backup": str(backup.folder),
+        }
+
+    def _prefs_read(self, params: dict[str, Any], _notify: Notify) -> dict[str, Any]:
+        store = self._prefs_store(params)
+        entries = store.read()
+        return {
+            "location": store.location,
+            "entries": [
+                {"name": name, "value": entry.value, "kind": entry.kind}
+                for name, entry in sorted(entries.items())
+            ],
+        }
+
+    def _prefs_set(self, params: dict[str, Any], _notify: Notify) -> dict[str, Any]:
+        store = self._prefs_store(params)
+        name = str(_require(params, "name"))
+        entries = store.read()
+        if name not in entries:
+            raise RpcError(INVALID_PARAMS, f"There is no setting called '{name}' to change.")
+
+        # The registry has no file to copy, and the rule that nothing changes
+        # without a backup gets no exception for that.
+        backups = BackupStore.for_system(self.system)
+        backup = backups.create_from_bytes(
+            f"{store.location}.json", store.export(), plugin_id="playerprefs"
+        )
+        before = entries[name].value
+        store.write(name, playerprefs.coerce_like(before, _require_any(params, "value")))
+        return {
+            "written": True,
+            "name": name,
+            "before": before,
+            "after": store.read()[name].value,
+            "backup": str(backup.folder),
+        }
+
+    def _prefs_store(self, params: dict[str, Any]) -> playerprefs.PlayerPrefs:
+        company, product = params.get("company"), params.get("product")
+        folder = params.get("game_folder")
+        if folder:
+            game = examine(Path(str(folder)))
+            company, product = company or game.company, product or game.project
+        if not company or not product:
+            raise RpcError(
+                INVALID_PARAMS,
+                "Unity settings are stored under a publisher and a product name. "
+                "Give both, or the game's folder.",
+            )
+        return playerprefs.open_prefs(self.system, str(company), str(product))
 
     def _identify(self, params: dict[str, Any], _notify: Notify) -> dict[str, Any]:
         raw = _read(Path(_require(params, "path")))
@@ -525,6 +631,21 @@ def _require(params: Mapping[str, Any], name: str) -> str:
     if not isinstance(value, str) or not value:
         raise RpcError(INVALID_PARAMS, f"This call needs a '{name}'.")
     return value
+
+
+def _require_number(params: Mapping[str, Any], name: str) -> float:
+    """A number, and not a bool — JSON says True is 1, a player does not."""
+    value = params.get(name)
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        raise RpcError(INVALID_PARAMS, f"This call needs '{name}' to be a number.")
+    return float(value)
+
+
+def _require_any(params: Mapping[str, Any], name: str) -> Any:
+    """A value of whatever type the caller sent, as long as they sent one."""
+    if params.get(name) is None:
+        raise RpcError(INVALID_PARAMS, f"This call needs a '{name}'.")
+    return params[name]
 
 
 def _read(path: Path) -> bytes:

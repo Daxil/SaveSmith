@@ -207,6 +207,22 @@ def open_prefs(system: SystemFacade, company: str, product: str) -> PlayerPrefs:
 # ---------------------------------------------------------------------------
 
 
+def coerce_like(existing: Any, value: Any) -> Any:
+    """Store a new value the way the game stored the old one.
+
+    Unity reads a setting back with the same call it wrote it with, so turning
+    an int into a string — which JSON makes easy to do by accident — gives the
+    game a value it will not read.
+    """
+    if isinstance(existing, bool):
+        return bool(value)
+    if isinstance(existing, int):
+        return int(value)
+    if isinstance(existing, float):
+        return float(value)
+    return str(value)
+
+
 def _from_registry(data: Any, value_type: int) -> Any:
     """Turn a stored registry value into something a person can read.
 

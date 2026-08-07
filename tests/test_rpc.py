@@ -305,3 +305,91 @@ class TestPluginsOverTheWire:
         bad.write_bytes(b"not a zip at all")
         response = call(server, "plugins.install", path=str(bad))
         assert "readable archive" in response["error"]["message"]
+
+
+class TestEditingWithoutAPlugin:
+    """The same capability the CLI's search/poke give, over the wire."""
+
+    def test_search_answers_with_addresses(self, server: Server, save: Path) -> None:
+        found = result_of(server, "search", path=str(save), value=100)
+        assert found["format"] == "gzip → json_parse"
+        assert found["structured"] is True
+        assert [site["address"] for site in found["sites"]] == ["gold"]
+
+    def test_poke_will_not_write_without_confirmation(self, server: Server, save: Path) -> None:
+        before = save.read_bytes()
+        response = call(server, "poke", path=str(save), address="gold", value=500)
+        assert response["error"]["code"] == INVALID_PARAMS
+        assert "has no plugin" in response["error"]["message"]
+        assert save.read_bytes() == before
+
+    def test_poke_writes_once_confirmed(self, server: Server, save: Path) -> None:
+        written = result_of(
+            server, "poke", path=str(save), address="gold", value=500, confirmed=True
+        )
+        assert written["written"] and written["before"] == 100 and written["after"] == 500
+        assert written["backup"]
+        assert json.loads(gzip.decompress(save.read_bytes()))["gold"] == 500
+
+    def test_a_dry_run_changes_nothing(self, server: Server, save: Path) -> None:
+        before = save.read_bytes()
+        result = result_of(
+            server, "poke", path=str(save), address="gold", value=500,
+            confirmed=True, dry_run=True,
+        )
+        assert result["written"] is False
+        assert save.read_bytes() == before
+
+    def test_a_bad_address_comes_back_as_a_sentence(self, server: Server, tmp_path: Path) -> None:
+        blob = tmp_path / "slot.bin"
+        blob.write_bytes(b"\x00" * 64)
+        response = call(server, "poke", path=str(blob), address="0x10", value=1, confirmed=True)
+        assert response["error"]["code"] == SAVESMITH_ERROR
+        assert "does not say how the number is stored" in response["error"]["message"]
+
+
+class TestPlayerPrefsOverTheWire:
+    def _plist(self, home: FakeSystem, **values: Any) -> None:
+        import plistlib
+
+        folder = home.home_dir / "Library" / "Preferences"
+        folder.mkdir(parents=True, exist_ok=True)
+        with (folder / "unity.Tiny Studio.Coin Quest.plist").open("wb") as handle:
+            plistlib.dump(values, handle, fmt=plistlib.FMT_BINARY)
+
+    def test_reading(self, server: Server, home: FakeSystem) -> None:
+        self._plist(home, coins=250, muted=True)
+        result = result_of(server, "prefs.read", company="Tiny Studio", product="Coin Quest")
+        assert {entry["name"] for entry in result["entries"]} == {"coins", "muted"}
+
+    def test_writing_backs_up_first(self, server: Server, home: FakeSystem) -> None:
+        self._plist(home, coins=250)
+        written = result_of(
+            server, "prefs.set", company="Tiny Studio", product="Coin Quest",
+            name="coins", value=9999,
+        )
+        assert written["before"] == 250 and written["after"] == 9999
+        assert written["backup"], "the registry has no file, but the rule has no exception"
+
+    def test_the_stored_type_survives(self, server: Server, home: FakeSystem) -> None:
+        """A number that comes back as a string is a setting the game cannot read."""
+        self._plist(home, coins=250)
+        result_of(
+            server, "prefs.set", company="Tiny Studio", product="Coin Quest",
+            name="coins", value="9999",
+        )
+        after = result_of(server, "prefs.read", company="Tiny Studio", product="Coin Quest")
+        assert after["entries"][0]["value"] == 9999
+
+    def test_a_setting_that_is_not_there(self, server: Server, home: FakeSystem) -> None:
+        self._plist(home, coins=250)
+        response = call(
+            server, "prefs.set", company="Tiny Studio", product="Coin Quest",
+            name="gems", value=1,
+        )
+        assert response["error"]["code"] == INVALID_PARAMS
+
+    def test_naming_neither_the_game_nor_the_company(self, server: Server) -> None:
+        response = call(server, "prefs.read")
+        assert response["error"]["code"] == INVALID_PARAMS
+        assert "publisher" in response["error"]["message"]
