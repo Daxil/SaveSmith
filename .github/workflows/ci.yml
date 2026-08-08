@@ -172,7 +172,16 @@ jobs:
           # so what gets audited is the change being tested and not whatever
           # main happened to hold.
           brew tap daxil/savesmith "$GITHUB_WORKSPACE"
-          brew audit --cask --strict --online daxil/savesmith/savesmith
+          # The complaint goes into the run summary, not only the log: reading
+          # a workflow log needs admin rights on the repository, so for anybody
+          # else a red cross is all there is.
+          set -o pipefail
+          if ! brew audit --cask --strict --online daxil/savesmith/savesmith 2>&1 \
+               | tee "$RUNNER_TEMP/audit.log"; then
+            echo "::error title=Homebrew не принял cask::$(grep -v '^$' "$RUNNER_TEMP/audit.log" \
+              | tail -n 12 | tr '\n' '|' | cut -c1-900)"
+            exit 1
+          fi
 
   # The window, and the shell around it. Kept apart from `test` so that a
   # broken Rust toolchain cannot hide a failing core test, and so the core
