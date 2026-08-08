@@ -85,12 +85,18 @@ export function GameScreen({
 
       {byAddress.length > 0 && (
         <>
-          <h2>
-            {byAddress.length === 1 ? "Сохранение" : "Сохранения"} — правится по числу
-          </h2>
+          <h2>{byAddress.length === 1 ? "Сохранение" : "Сохранения"} без плагина</h2>
+          {/* What the file itself carries decides what the person gets, and
+              saying "правится по числу" to somebody whose save is full of
+              readable names undersells it by a mile: for a JSON save the
+              second screen lists every field the developer named. */}
           <p className="hint">
-            Для этой игры никто не описал, что означают байты внутри, поэтому полей
-            по именам здесь нет. Но это поправимо — и делать это руками не обязательно.
+            {byAddress.some((save) => save.recognised)
+              ? "Никто не описал эту игру, но её файл называет свои значения сам — " +
+                "открой, и увидишь их списком, с именами разработчика."
+              : "Для этой игры никто не описал, что означают байты внутри. " +
+                "Открой — и можно будет найти число, которое ты видишь в игре."}
+            {" "}А можно не разбираться вовсе:
           </p>
           {/* The offer goes above the manual route on purpose: for most people
               it is the better one, and burying it under an explanation of
