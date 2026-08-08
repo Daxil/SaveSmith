@@ -20,6 +20,7 @@ import {
   type FoundSave,
   type Session,
 } from "./rpc";
+import { Report } from "./Report";
 import { Updates } from "./Updates";
 import { GameScreen } from "./screens/GameScreen";
 import { Analyse } from "./screens/Analyse";
@@ -107,7 +108,10 @@ export function App() {
 
       {failure && (
         <div className="failure" role="alert">
-          {failure.message}
+          <p>{failure.message}</p>
+          {/* Offered here and only here: a person who is not stuck has no use
+              for it, and a person who is has nothing else to go on. */}
+          <Report backend={backend} about={failure.message} />
         </div>
       )}
 

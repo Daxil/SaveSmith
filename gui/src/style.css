@@ -295,3 +295,13 @@ details summary { color: var(--muted); cursor: pointer; margin-top: 20px; }
 }
 .backup-list .confirm span { color: var(--warn); font-size: 14px; }
 .tag.latest { background: #2c3040; color: var(--muted); padding: 1px 8px; border-radius: 999px; font-size: 11px; }
+
+/* Everything a maintainer needs, on the clipboard, from one press. */
+.report { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; align-items: flex-start; }
+.report .note { color: var(--muted); font-size: 13px; }
+.report textarea {
+  width: 100%; font-family: ui-monospace, monospace; font-size: 12px;
+  background: var(--bg); color: var(--text);
+  border: 1px solid var(--line); border-radius: 8px; padding: 10px;
+}
+.failure p { margin: 0; }
