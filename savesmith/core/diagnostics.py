@@ -42,6 +42,10 @@ class Report:
     steam: SteamScan | None = None
     steam_error: SaveSmithError | None = None
     prefixes: list[WinePrefix] = field(default_factory=list)
+    assistants: list[tuple[str, str]] = field(default_factory=list)
+    """AI assistants found here, as (name, path). Empty is a normal answer."""
+    mcp_command: str = ""
+    """How SaveSmith would start its own tool server for one of them."""
 
 
 def collect(system: SystemFacade | None = None) -> Report:
@@ -67,6 +71,15 @@ def collect(system: SystemFacade | None = None) -> Report:
         report.steam_error = exc
 
     report.prefixes = scan_prefixes(system)
+
+    # The first question when somebody says the "Разобрать эту игру" button did
+    # nothing is which assistant the program can see — and the second is what
+    # it would try to run. Both are invisible from outside and neither is worth
+    # guessing at over a chat.
+    from savesmith.agent import assistant
+
+    report.assistants = [(one.name, str(one.path)) for one in assistant.installed()]
+    report.mcp_command = " ".join(assistant.backend_command())
     return report
 
 
@@ -113,6 +126,14 @@ def render(report: Report) -> str:
         users = ", ".join(prefix.users) or "no profiles"
         lines.append(f"  {prefix.name} [{prefix.kind.value}] {prefix.path}")
         lines.append(f"    profiles: {users}")
+
+    lines += ["", "AI assistants, for working out an unknown game", "-" * 60]
+    if report.assistants:
+        for name, path in report.assistants:
+            lines.append(f"  {name}: {path}")
+    else:
+        lines.append("  none found — the 'Разобрать эту игру' button will say so")
+    lines.append(f"  SaveSmith would offer its tools as: {report.mcp_command}")
 
     return "\n".join(lines)
 

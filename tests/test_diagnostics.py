@@ -118,3 +118,28 @@ def test_main_runs_against_the_real_machine(capsys: pytest.CaptureFixture[str]) 
     """The CI smoke step; also proves the native calls work on each runner."""
     assert main() == 0
     assert "SaveSmith diagnostics" in capsys.readouterr().out
+
+
+def test_it_says_which_assistant_it_can_see() -> None:
+    """The first question when 'Разобрать эту игру' does nothing.
+
+    Which assistant the program can find, and what it would run to offer its
+    tools, are both invisible from outside — and neither is worth guessing at
+    over a chat with somebody whose game will not open.
+    """
+    text = render(collect())
+
+    assert "AI assistants" in text
+    assert "SaveSmith would offer its tools as:" in text
+
+
+def test_no_assistant_is_reported_as_a_fact_not_a_fault(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from savesmith.agent import assistant
+
+    monkeypatch.setattr(assistant, "installed", lambda: [])
+
+    text = render(collect())
+
+    assert "none found" in text
