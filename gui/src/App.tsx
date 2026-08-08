@@ -77,8 +77,10 @@ export function App() {
   const openSave = (save: FoundSave) =>
     guard(async () => {
       // Fields by name when a plugin knows the format; otherwise the only
-      // honest route in is the number the player can see on screen.
-      if (save.plugin === null && !save.recognised) {
+      // honest route in is the number the player can see on screen. The
+      // ladder unwrapping the file is not enough: it yields values with no
+      // meaning attached, and opening it as if a plugin existed fails.
+      if (save.plugin === null) {
         setByNumber(save);
         return;
       }

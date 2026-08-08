@@ -35,9 +35,12 @@ export function GameScreen({
 }) {
   const { game, saves, prefs, bottle } = found;
   const mine = saves.filter((save) => save.kind === "save");
-  // A plugin beats the generic ladder: it is what turns bytes into "Руны".
-  const editable = mine.filter((save) => save.plugin !== null || save.recognised);
-  const byAddress = mine.filter((save) => save.plugin === null && !save.recognised);
+  // A plugin, and only a plugin, turns bytes into "Руны". The generic ladder
+  // being able to unwrap a file is a different thing: it gives the values but
+  // not what they mean, and a save sorted here on that basis was sent to a
+  // screen that immediately failed with "no plugin can read this save".
+  const editable = mine.filter((save) => save.plugin !== null);
+  const byAddress = mine.filter((save) => save.plugin === null);
   // The same game can be installed twice — two bottles, a reinstall — and then
   // two saves both look right. The newest is the one being played.
   const newest = mine.reduce<number>((best, save) => Math.max(best, save.modified), 0);

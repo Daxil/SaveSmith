@@ -855,7 +855,10 @@ class Server:
         if not matches:
             raise RpcError(
                 SAVESMITH_ERROR,
-                "No plugin can read this save yet. Run discovery on it to work out the format.",
+                "No plugin describes this save yet, so its values have no names. "
+                "SaveSmith can work the format out — in the window that is the "
+                "'Разобрать эту игру' button, and from the command line it is "
+                "'savesmith discover'.",
             )
         return matches[0]
 

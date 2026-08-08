@@ -299,11 +299,22 @@ class TestEditingSession:
         state = result_of(server, "set", session=second["session"], field="gold", value=2)
         assert state["pending"] == [{"field": "gold", "before": 7, "after": 2}]
 
-    def test_a_save_no_plugin_can_read(self, server: Server, tmp_path: Path) -> None:
+    def test_a_save_no_plugin_can_read_says_what_to_do_about_it(
+        self, server: Server, tmp_path: Path
+    ) -> None:
+        """Both halves of the answer, because the window has one too.
+
+        This used to say "run discovery on it" — advice to run a command, given
+        to somebody who may well be looking at a window and has no command line
+        anywhere.
+        """
         blob = tmp_path / "noise.bin"
         blob.write_bytes(bytes(range(256)) * 16)
-        response = call(server, "open", path=str(blob))
-        assert "discovery" in response["error"]["message"]
+
+        message = call(server, "open", path=str(blob))["error"]["message"]
+
+        assert "Разобрать эту игру" in message
+        assert "savesmith discover" in message
 
 
 class TestProgress:
