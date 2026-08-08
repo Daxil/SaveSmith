@@ -18,6 +18,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { Backend, Session } from "../rpc";
 import { Analyse } from "./Analyse";
 import { Backups } from "./Backups";
+import { GameScreen } from "./GameScreen";
 import { SaveScreen } from "./SaveScreen";
 
 /** Whether the control refuses to be used, without another matcher library. */
@@ -254,5 +255,48 @@ describe("Разбор незнакомой игры", () => {
 
     expect(await screen.findByText(/Помощника на этом компьютере нет/)).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Разобрать" })).toBeNull();
+  });
+});
+
+describe("Когда сохранений не нашлось", () => {
+  const nothing = {
+    bottle: null,
+    game: { title: "Моя Игра", engine: "unknown", project: null, steam_appid: null, anticheat: [] },
+    searched: ["/Users/x/Library/Application Support/Моя Игра"],
+    prefs: null,
+    saves: [],
+    aside: {},
+  };
+
+  it("не заканчивает разговор списком просмотренных папок", () => {
+    render(
+      <GameScreen found={nothing} onOpen={vi.fn()} onAnalyse={vi.fn()}
+                  onElsewhere={vi.fn()} onBack={vi.fn()} />,
+    );
+
+    // The offer to say where they are, not just a report of where we looked.
+    expect(screen.getByText(/покажи, и дальше он разберётся сам/)).toBeTruthy();
+    expect(screen.getByText("Где уже искали")).toBeTruthy();
+  });
+
+  it("сохранение без плагина ведёт на разбор, а не в отказ", async () => {
+    const onAnalyse = vi.fn();
+    const unknown = {
+      ...nothing,
+      saves: [{
+        path: "/games/user1.dat", format: "неизвестный", recognised: true, openable: true,
+        plugin: null, kind: "save" as const, modified: 1, size: 100,
+      }],
+    };
+
+    render(
+      <GameScreen found={unknown} onOpen={vi.fn()} onAnalyse={onAnalyse}
+                  onElsewhere={vi.fn()} onBack={vi.fn()} />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: /Разобрать эту игру/ }));
+
+    // `recognised` without a plugin used to be sorted as "editable by name",
+    // and opening it failed. It belongs here.
+    expect(onAnalyse).toHaveBeenCalled();
   });
 });

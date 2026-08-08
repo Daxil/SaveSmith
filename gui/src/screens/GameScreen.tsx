@@ -13,7 +13,8 @@
  * is which — `kind` — so the command line and the window agree.
  */
 
-import type { FoundGame, FoundSave } from "../rpc";
+import { browseForSaves } from "../native";
+import { packaged, type FoundGame, type FoundSave } from "../rpc";
 
 const ASIDE_WORDS: Record<string, [string, string]> = {
   backup: ["резервную копию", "резервных копий"],
@@ -25,12 +26,15 @@ export function GameScreen({
   found,
   onOpen,
   onAnalyse,
+  onElsewhere,
   onBack,
 }: {
   found: FoundGame;
   onOpen: (save: FoundSave) => void;
   /** Have an assistant work this format out, so the save gets real fields. */
   onAnalyse: (save: FoundSave) => void;
+  /** Look in a folder the person names, when every known place came up empty. */
+  onElsewhere: (folder: string) => void;
   onBack: () => void;
 }) {
   const { game, saves, prefs, bottle } = found;
@@ -134,13 +138,29 @@ export function GameScreen({
       )}
 
       {mine.length === 0 && !prefs && (
-        <p className="empty">
-          Сохранений не нашлось. Искал здесь:
-          <br />
-          {found.searched.map((place) => (
-            <code key={place}>{place}</code>
-          ))}
-        </p>
+        <div className="empty">
+          <p>
+            Сохранений не нашлось. Это бывает: игра могла положить их куда-то, чего
+            SaveSmith пока не знает. Если ты знаешь, где они, — покажи, и дальше он
+            разберётся сам.
+          </p>
+          {packaged() && (
+            <button
+              className="browse"
+              onClick={() =>
+                void browseForSaves().then((folder) => folder && onElsewhere(folder))
+              }
+            >
+              Указать папку с сохранениями
+            </button>
+          )}
+          <details>
+            <summary>Где уже искали</summary>
+            {found.searched.map((place) => (
+              <code key={place}>{place}</code>
+            ))}
+          </details>
+        </div>
       )}
 
       <Aside aside={found.aside} />

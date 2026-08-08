@@ -177,6 +177,7 @@ export function App() {
             found={found}
             onOpen={openSave}
             onAnalyse={setAnalysing}
+            onElsewhere={openFolder}
             onBack={() => setFound(null)}
           />
         ) : (

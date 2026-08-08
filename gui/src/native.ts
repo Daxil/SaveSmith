@@ -26,6 +26,25 @@ export async function browseForFolder(): Promise<string | null> {
 }
 
 /**
+ * The folder where the saves themselves are.
+ *
+ * A different question from "where is the game installed", and asked at a
+ * different moment: when SaveSmith looked in every place it knows and found
+ * nothing. The person often knows the answer — they have seen the folder while
+ * copying a save somewhere — and until there was a way to say so, the screen
+ * listed the places it had searched and stopped.
+ */
+export async function browseForSaves(): Promise<string | null> {
+  const { open } = await import("@tauri-apps/plugin-dialog");
+  const picked = await open({
+    directory: true,
+    multiple: false,
+    title: "Папка с сохранениями",
+  });
+  return typeof picked === "string" ? picked : null;
+}
+
+/**
  * The game itself: an ``.exe`` on Windows, an application on a Mac.
  *
  * A separate dialog from the folder one because a native open panel is either
