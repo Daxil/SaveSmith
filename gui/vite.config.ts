@@ -111,6 +111,12 @@ function backendBridge(): Plugin {
 
 export default defineConfig({
   plugins: [react(), backendBridge()],
+  // The screens are tested in a fake browser rather than only through the
+  // transport. What they guarantee — that Save stays disabled until the core
+  // says it may write, that a restore is confirmed first, that nothing is sent
+  // to an assistant unagreed — are the guards that protect somebody's save,
+  // and until now nothing checked them at all.
+  test: { environment: "jsdom", globals: true },
   // Tauri serves the built files from disk, so every asset path has to be
   // relative rather than rooted at /.
   base: "./",
