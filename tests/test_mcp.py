@@ -279,3 +279,40 @@ class TestTheResultIsVisibleAfterwards:
 
         assert [plugin.id for plugin in theirs] == ["coin-quest"]
         assert bundled().match(raw) != theirs
+
+
+class TestNotTramplingWhatIsAlreadyThere:
+    """A proposal is worth less than an evening of somebody's work."""
+
+    def test_a_plugin_for_a_different_game_under_the_same_id_is_refused(
+        self, server: Server, save: Path, fake_machine: FakeSystem
+    ) -> None:
+        from savesmith.core.store import PluginStore
+
+        mine = PluginStore.for_system(fake_machine).root / "coin-quest"
+        mine.mkdir(parents=True)
+        careful_work = {**MANIFEST, "game": "Совсем другая игра", "version": 3}
+        (mine / "manifest.json").write_text(json.dumps(careful_work), encoding="utf-8")
+
+        answer = text_of(call(server, "propose_plugin", manifest=MANIFEST, saves=[str(save)]))
+
+        assert "already a plugin called" in answer
+        kept = PluginStore.for_system(fake_machine).catalogue().by_id("coin-quest")
+        assert kept is not None
+        assert kept.game == "Совсем другая игра"
+
+    def test_an_older_version_does_not_replace_a_newer_one(
+        self, server: Server, save: Path, fake_machine: FakeSystem
+    ) -> None:
+        from savesmith.core.store import PluginStore
+
+        newer = PluginStore.for_system(fake_machine).root / "coin-quest"
+        newer.mkdir(parents=True)
+        (newer / "manifest.json").write_text(
+            json.dumps({**MANIFEST, "version": 9}), encoding="utf-8"
+        )
+
+        answer = text_of(call(server, "propose_plugin", manifest=MANIFEST, saves=[str(save)]))
+
+        assert "Not installed" in answer
+        assert PluginStore.for_system(fake_machine).catalogue().by_id("coin-quest").version == 9

@@ -43,6 +43,7 @@ from __future__ import annotations
 
 import json
 import sys
+import tempfile
 import traceback
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -55,7 +56,7 @@ from savesmith.core.discover import look_at
 from savesmith.core.errors import SaveSmithError
 from savesmith.core.paths import RealSystem, SystemFacade
 from savesmith.core.pipeline import Pipeline
-from savesmith.core.plugin import Plugin
+from savesmith.core.plugin import MANIFEST_NAME, Plugin
 from savesmith.core.repository import verify
 from savesmith.core.store import PluginStore
 
@@ -492,12 +493,38 @@ class Server:
             )
             return "\n".join(lines)
 
+        # Installed through the store rather than written into it. Writing the
+        # file directly skipped every rule the store has — chiefly that a newer
+        # plugin is not replaced by an older one — and would let a proposal
+        # quietly overwrite something the person made themselves and cares
+        # about. What is being described here is a format; it is not worth
+        # anybody's evening's work.
         store = PluginStore.for_system(self.system)
-        folder = store.root / plugin.id
-        folder.mkdir(parents=True, exist_ok=True)
-        (folder / "manifest.json").write_text(
-            json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
+        existing = store.catalogue().by_id(plugin.id)
+        if existing is not None and existing.game != plugin.game:
+            return "\n".join(
+                [
+                    *lines,
+                    "",
+                    f"Not installed. There is already a plugin called '{plugin.id}' on "
+                    f"this machine, and it is for a different game ({existing.game}). "
+                    f"Choose an id that is not taken — the game's name in lowercase "
+                    f"with hyphens is usually free — and propose it again.",
+                ]
+            )
+
+        with tempfile.TemporaryDirectory() as staging:
+            prepared = Path(staging) / plugin.id
+            prepared.mkdir()
+            (prepared / MANIFEST_NAME).write_text(
+                json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+            try:
+                installed = store.install_folder(prepared)
+            except SaveSmithError as exc:
+                return "\n".join([*lines, "", f"Not installed: {exc.user_message}"])
+
+        folder = installed.folder
         lines += [
             "",
             f"Installed on this machine: {folder}",
