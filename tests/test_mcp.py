@@ -236,3 +236,46 @@ class TestTheProtocol:
 
         assert answer is not None
         assert "error" in answer
+
+
+class TestTheResultIsVisibleAfterwards:
+    """The half of the feature that is easy to forget to check.
+
+    Installing a plugin is not the point; the point is that the person's game
+    then opens with names on its numbers. A plugin an assistant writes usually
+    has no `detect` block — nobody told it where saves live — so if plugins
+    were ever matched by that block instead of by opening the file, the whole
+    flow would keep reporting success and produce nothing anybody can see.
+    """
+
+    def test_a_plugin_with_no_detect_block_still_opens_the_save(
+        self, server: Server, save: Path, fake_machine: FakeSystem
+    ) -> None:
+        from savesmith.rpc import Server as RpcServer
+
+        assert "detect" not in MANIFEST
+        call(server, "propose_plugin", manifest=MANIFEST, saves=[str(save)])
+
+        answer = RpcServer(system=fake_machine).handle(
+            {"jsonrpc": "2.0", "id": 1, "method": "open", "params": {"path": str(save)}}
+        )
+
+        assert answer is not None, "the window asks for exactly this"
+        assert "error" not in answer, answer.get("error")
+        assert answer["result"]["plugin"]["id"] == "coin-quest"
+        assert [field["label"] for field in answer["result"]["fields"]] == ["Gold"]
+
+    def test_what_the_user_installed_wins_over_what_shipped_with_us(
+        self, server: Server, save: Path, fake_machine: FakeSystem
+    ) -> None:
+        """Their plugin describes their game; ours describes a whole engine."""
+        from savesmith.core.repository import PluginRepository, bundled
+        from savesmith.core.store import PluginStore
+
+        call(server, "propose_plugin", manifest=MANIFEST, saves=[str(save)])
+        raw = save.read_bytes()
+
+        theirs = PluginRepository(PluginStore.for_system(fake_machine).root).match(raw)
+
+        assert [plugin.id for plugin in theirs] == ["coin-quest"]
+        assert bundled().match(raw) != theirs
