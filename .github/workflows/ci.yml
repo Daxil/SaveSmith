@@ -125,6 +125,9 @@ jobs:
             exit 0
           fi
 
+          # Judged after the same trimming the build does, or this would warn
+          # about a secret that is going to work perfectly well.
+          KEY=$(printf '%s' "$KEY" | tr -d '[:space:]')
           kind=$(printf '%s' "$KEY" | base64 -d 2>/dev/null | head -c 200 | tr -d '\0')
           # A key cut short still decodes to its own comment line, so the
           # length is checked too: the real thing is around 350 characters.
@@ -246,6 +249,14 @@ jobs:
                  "would ship an app that can never update itself. Add the secret."
             exit 1
           fi
+
+          # A key pasted into a web form arrives with a newline on the end more
+          # often than not, and base64 padding followed by anything at all is a
+          # decoding error: "Invalid symbol 61, offset 346", half an hour into a
+          # tagged build. Base64 contains no whitespace, so stripping it is safe
+          # and turns a fussy secret into one anybody can paste.
+          export TAURI_SIGNING_PRIVATE_KEY="$(printf '%s' "$TAURI_SIGNING_PRIVATE_KEY" \
+            | tr -d '[:space:]')"
 
           # The reason goes into the run summary, not only into the log.
           # Downloading a workflow log needs admin rights on the repository, so

@@ -247,3 +247,34 @@ class TestSayingWhyItStopped:
         why = assistant._why_it_stopped(self.one(), "segmentation fault")
 
         assert "Ничего не изменено" in why
+
+
+class TestWhatCountsAsTheAnswer:
+    """The last thing an assistant prints is not always its answer."""
+
+    def test_a_finished_run_reports_what_it_found(self) -> None:
+        outcome = assistant.Outcome()
+
+        assistant._absorb(
+            {"type": "result", "subtype": "success", "is_error": False,
+             "result": "Формат оказался сохранением RPG Maker MV."},
+            outcome,
+        )
+
+        assert "RPG Maker" in outcome.summary
+
+    def test_a_service_message_does_not_become_the_result(self) -> None:
+        """Seen in a real run: the plugin installed, and the summary read
+        "You've hit your session limit" — which describes nothing about the
+        format and reads like the work failed when it had not."""
+        outcome = assistant.Outcome()
+        outcome.plugin_id = "coin-quest"
+
+        assistant._absorb(
+            {"type": "result", "subtype": "error_during_execution", "is_error": True,
+             "result": "You've hit your session limit · resets 5am"},
+            outcome,
+        )
+
+        assert outcome.summary == ""
+        assert assistant.summarise(outcome) == "Формат разобран, плагин установлен."

@@ -370,8 +370,14 @@ def _readable(event: Mapping[str, object]) -> list[Progress]:
 def _absorb(event: Mapping[str, object], outcome: Outcome) -> None:
     """Notice the two things that decide whether this worked."""
     if event.get("type") == "result":
+        # Only when the assistant is reporting its answer. A run that ran out of
+        # session, hit its turn limit or fell over puts the service's own words
+        # in the same field — and a real run, seen here, finished by installing
+        # a plugin and then showed "You've hit your session limit" where the
+        # description of the format should have been.
         result = event.get("result")
-        if isinstance(result, str):
+        finished = not event.get("is_error") and event.get("subtype") in (None, "success")
+        if finished and isinstance(result, str):
             outcome.summary = result.strip()
 
     message = event.get("message")
