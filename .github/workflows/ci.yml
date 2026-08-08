@@ -254,8 +254,14 @@ jobs:
           set -o pipefail
           if ! npx tauri build --config src-tauri/tauri.release.conf.json 2>&1 \
                | tee "$RUNNER_TEMP/tauri.log"; then
-            echo "::error title=Не собралось окно::$(tail -n 25 "$RUNNER_TEMP/tauri.log" \
-              | tr '\n' '|' | cut -c1-900)"
+            # The lines that say what went wrong, not the last lines of the
+            # build. A tail catches whatever the bundler was printing when it
+            # died — usually a list of asset sizes — and buries the one line
+            # that matters under it.
+            said=$(grep -iE 'error|failed|panicked|not found|no such' \
+                     "$RUNNER_TEMP/tauri.log" \
+                   | sed 's/\x1b\[[0-9;]*m//g' | tail -n 8 | tr '\n' '|')
+            echo "::error title=Не собралось окно::${said:-$(tail -n 5 "$RUNNER_TEMP/tauri.log")}"
             exit 1
           fi
         shell: bash
