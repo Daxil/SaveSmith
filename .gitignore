@@ -33,3 +33,8 @@ gui/src-tauri/target/
 gui/src-tauri/binaries/
 # Tauri regenerates these from capabilities/ on every build.
 gui/src-tauri/gen/schemas/
+
+# Макет от дизайнера: справочный материал, а не часть сайта. Результат лежит
+# в docs/index.html, а сам бандл весит полмегабайта и содержит шрифты, которых
+# на странице нет.
+SaveSmith Landing.html
