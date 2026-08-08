@@ -166,6 +166,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Homebrew reads it and agrees
+        env:
+          # --online asks the GitHub API about the release, and sixty
+          # unauthenticated calls an hour are shared with every other runner on
+          # that address — so the audit failed on a rate limit rather than on
+          # anything about the cask.
+          HOMEBREW_GITHUB_API_TOKEN: ${{ github.token }}
         run: |
           # `brew audit` takes a name, not a path — a cask is only a cask once
           # it is in a tap. Tapped from this checkout rather than from GitHub,

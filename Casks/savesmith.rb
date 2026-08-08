@@ -23,8 +23,9 @@ cask "savesmith" do
   sha256 arm:   "4ef733e73ed6270243e3aedbf4b15c57b0470d28af129136cfe443777bdb78c9",
          intel: "46b8e6d8c65efe5f1971812d3a8ba129492ca7514c9b7dc30483fb85052613ee"
 
-  url "https://github.com/Daxil/SaveSmith/releases/download/v#{version}/SaveSmith-#{version}-macos-#{arch}.dmg",
-      verified: "github.com/Daxil/SaveSmith/"
+  # No `verified:` here: it exists to vouch for a download host that differs
+  # from the homepage, and both of these are github.com.
+  url "https://github.com/Daxil/SaveSmith/releases/download/v#{version}/SaveSmith-#{version}-macos-#{arch}.dmg"
 
   name "SaveSmith"
   desc "Save editor for single-player games that works out unknown formats"
