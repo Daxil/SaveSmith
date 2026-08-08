@@ -153,6 +153,22 @@ jobs:
               ;;
           esac
 
+  # The Homebrew cask, checked by Homebrew itself.
+  #
+  # It is the one install path where nobody sees "SaveSmith is damaged", so a
+  # typo in it costs more than a typo elsewhere: the person who used it is
+  # exactly the person who would otherwise have been stopped. Homebrew's own
+  # audit is the only thing that knows the current rules of the DSL.
+  cask:
+    name: Cask
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Homebrew reads it and agrees
+        run: |
+          brew audit --cask --strict --online Casks/savesmith.rb
+
   # The window, and the shell around it. Kept apart from `test` so that a
   # broken Rust toolchain cannot hide a failing core test, and so the core
   # keeps building on machines that have no Rust at all.
@@ -303,7 +319,11 @@ jobs:
     permissions:
       contents: write
     steps:
+      # Full history: this job pushes the cask update back to main, and a
+      # shallow clone cannot push.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       # The tag says one version and the files carry another only once before
       # somebody downloads "0.2.0" and gets 0.1.0. Four files hold the number;
@@ -425,3 +445,35 @@ jobs:
             --title "SaveSmith $GITHUB_REF_NAME" \
             --notes-file notes.md \
             --verify-tag
+
+      # A cask that still points at last month's build installs last month's
+      # build, quietly, for everybody who uses that path. Rewritten from the
+      # files just published rather than by anybody remembering to.
+      - name: Point the Homebrew cask at what was just published
+        # Never worth failing a published release over.
+        continue-on-error: true
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          arm=$(shasum -a 256 "release/SaveSmith-$VERSION-macos-arm64.dmg" | cut -d' ' -f1)
+          intel=$(shasum -a 256 "release/SaveSmith-$VERSION-macos-x64.dmg" | cut -d' ' -f1)
+          python3 - "$VERSION" "$arm" "$intel" <<'PY'
+          import pathlib, re, sys
+          version, arm, intel = sys.argv[1:4]
+          cask = pathlib.Path("Casks/savesmith.rb")
+          text = cask.read_text()
+          text = re.sub(r'version "[^"]*"', f'version "{version}"', text, count=1)
+          text = re.sub(r'sha256 arm:   "[0-9a-f]*"', f'sha256 arm:   "{arm}"', text, count=1)
+          text = re.sub(r'intel: "[0-9a-f]*"', f'intel: "{intel}"', text, count=1)
+          cask.write_text(text)
+          PY
+          git diff --quiet Casks/savesmith.rb && { echo "cask already matches"; exit 0; }
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Casks/savesmith.rb
+          git commit -m "Cask указывает на $VERSION"
+          # Onto main, not the tag: a tag is a fixed point, and the cask has to
+          # move. Rebasing first so a commit pushed while the build ran is not
+          # thrown away.
+          git fetch origin main
+          git rebase origin/main
+          git push origin HEAD:main

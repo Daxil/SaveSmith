@@ -337,6 +337,18 @@
       </div>
 
       <p class="under">Windows и macOS · открытый код, MIT · бесплатно и без регистрации</p>
+        <details class="other" style="margin-top: 14px">
+          <summary>На маке есть путь без единого предупреждения — через Homebrew</summary>
+          <p class="under" style="text-align:left;max-width:620px;margin:14px auto 0">
+            <code>brew tap daxil/savesmith https://github.com/Daxil/SaveSmith</code><br />
+            <code>brew install --cask --no-quarantine savesmith</code>
+          </p>
+          <p class="under" style="text-align:left;max-width:620px">
+            Флаг <code>--no-quarantine</code> — не фокус, а суть: он не ставит на файл
+            пометку «скачано из интернета», из-за которой неподписанное приложение
+            получает «damaged». Обновляется потом само.
+          </p>
+        </details>
 
       <div class="stage">
         <!-- The mascot from the design. It is doing the thing described beside

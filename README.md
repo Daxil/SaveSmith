@@ -13,6 +13,16 @@
 Страница сама определит, что у тебя за система, и даст нужный файл. Windows и macOS,
 и Apple Silicon, и Intel.
 
+**На маке проще через Homebrew** — тогда macOS не будет ругаться вовсе:
+
+```
+brew tap daxil/savesmith https://github.com/Daxil/SaveSmith
+brew install --cask --no-quarantine savesmith
+```
+
+Флаг `--no-quarantine` тут не фокус, а суть: он не ставит на файл пометку «скачано из
+интернета», из-за которой неподписанное приложение получает «SaveSmith is damaged».
+
 ---
 
 ## Игр — миллион. Как это может работать со всеми?

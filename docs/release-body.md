@@ -23,6 +23,16 @@ chmod +x ~/Downloads/savesmith-{VERSION}-macos-*
 
 Окна это не касается.
 
+## На маке можно вообще без предупреждений
+
+```
+brew tap daxil/savesmith https://github.com/Daxil/SaveSmith
+brew install --cask --no-quarantine savesmith
+```
+
+Homebrew не ставит на файл пометку «скачано из интернета», поэтому ничего из
+написанного ниже про macOS не случится.
+
 ## Первый запуск: система будет ругаться
 
 **Так и должно быть, и вот почему.** У программы нет цифровой подписи: сертификаты стоят
