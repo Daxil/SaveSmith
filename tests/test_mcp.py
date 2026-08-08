@@ -315,4 +315,6 @@ class TestNotTramplingWhatIsAlreadyThere:
         answer = text_of(call(server, "propose_plugin", manifest=MANIFEST, saves=[str(save)]))
 
         assert "Not installed" in answer
-        assert PluginStore.for_system(fake_machine).catalogue().by_id("coin-quest").version == 9
+        kept = PluginStore.for_system(fake_machine).catalogue().by_id("coin-quest")
+        assert kept is not None
+        assert kept.version == 9
