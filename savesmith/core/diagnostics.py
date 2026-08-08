@@ -129,8 +129,8 @@ def render(report: Report) -> str:
 
     lines += ["", "AI assistants, for working out an unknown game", "-" * 60]
     if report.assistants:
-        for name, path in report.assistants:
-            lines.append(f"  {name}: {path}")
+        for name, where in report.assistants:
+            lines.append(f"  {name}: {where}")
     else:
         lines.append("  none found — the 'Разобрать эту игру' button will say so")
     lines.append(f"  SaveSmith would offer its tools as: {report.mcp_command}")
