@@ -167,7 +167,12 @@ jobs:
       - uses: actions/checkout@v4
       - name: Homebrew reads it and agrees
         run: |
-          brew audit --cask --strict --online Casks/savesmith.rb
+          # `brew audit` takes a name, not a path — a cask is only a cask once
+          # it is in a tap. Tapped from this checkout rather than from GitHub,
+          # so what gets audited is the change being tested and not whatever
+          # main happened to hold.
+          brew tap daxil/savesmith "$GITHUB_WORKSPACE"
+          brew audit --cask --strict --online daxil/savesmith/savesmith
 
   # The window, and the shell around it. Kept apart from `test` so that a
   # broken Rust toolchain cannot hide a failing core test, and so the core
